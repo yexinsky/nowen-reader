@@ -33,6 +33,8 @@ storage-history.json
 
 #claude
 .claude/
+.zcode/
+.zcodeignore
 dbcheck
 migrate
 # Comics (user data)

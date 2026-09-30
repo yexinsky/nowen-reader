@@ -51,7 +51,8 @@ func isLongRunningPath(path string) bool {
 		"/api/comics/batch",
 		"/api/metadata/batch",
 		"/api/metadata/scan",
-		"/api/ai/", // AI 接口调用 LLM 耗时较长，跳过全局超时
+		"/api/ai/",  // AI 接口调用 LLM 耗时较长，跳过全局超时
+		"/api/jm/", // JM 在线源:上游图片/网络请求耗时长,跳过 30s 全局超时
 	}
 	for _, prefix := range longRunningPrefixes {
 		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {

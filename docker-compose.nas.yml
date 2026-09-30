@@ -64,6 +64,13 @@ services:
       # - PERMISSION_FIX_MODE=recursive
       # NAS/SMB/NFS 无法 chown 时使用递归宽松模式（会回退到 a+rwX）
       # - PERMISSION_FIX_MODE=recursive-relaxed
+      # ── JM 在线漫画源（内置功能，随主程序运行，无需额外容器；可选配置）──
+      # 上游代理（Live 模式必需，留空=直连；也可在 Web 设置页修改，持久化于 /app/.cache/jm/）
+      # 容器内访问宿主机代理：Docker Desktop 用 host.docker.internal，Linux 用 172.17.0.1
+      # - JM_UPSTREAM_PROXY=http://host.docker.internal:10809
+      # 上游域名池覆盖（域名动态更新失败时的兜底，逗号分隔）
+      # - JM_API_DOMAINS=www.cdnhjk.net,www.cdngwc.cc
+      # - JM_IMAGE_DOMAINS=cdn-msp.jmapiproxy1.cc,cdn-msp.jmapiproxy2.cc
     # 内存限制（NAS 通常内存有限）
     deploy:
       resources:

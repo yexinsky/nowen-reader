@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useLocation } from "react-router-dom";
-import { LayoutDashboard, BookMarked, Settings, Layers, Tag } from "lucide-react";
+import { LayoutDashboard, BookMarked, Settings, Layers, Tag, Globe2 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
 
@@ -31,12 +31,16 @@ export default function MobileBottomNav() {
   }, []);
 
   // 在阅读器页面、漫画详情页以及未登录时不显示底部导航
-  const isReaderPage = pathname?.startsWith("/reader/") || pathname?.startsWith("/novel/");
-  const isComicDetailPage = pathname?.startsWith("/comic/");
+  const isReaderPage =
+    pathname?.startsWith("/reader/") ||
+    pathname?.startsWith("/novel/") ||
+    pathname?.startsWith("/jm/reader/");
+  const isComicDetailPage = pathname?.startsWith("/comic/") || pathname?.startsWith("/jm/comic/");
+  const isJmLoginPage = pathname?.startsWith("/jm/login");
 
   const currentTab = searchParams.get("tab");
 
-  const shouldHide = !isMobile || isReaderPage || isComicDetailPage || !user;
+  const shouldHide = !isMobile || isReaderPage || isComicDetailPage || isJmLoginPage || !user;
 
   const navItems = [
     {
@@ -50,6 +54,12 @@ export default function MobileBottomNav() {
       icon: BookMarked,
       label: "书库",
       active: pathname === "/books",
+    },
+    {
+      href: "/jm",
+      icon: Globe2,
+      label: "在线",
+      active: pathname === "/jm" || pathname.startsWith("/jm/"),
     },
     // 合集——仅管理员可见
     ...(isAdmin ? [{

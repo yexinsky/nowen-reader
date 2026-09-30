@@ -42,6 +42,14 @@ const DataQA = React.lazy(() => import("@/app/data-qa/page"));
 const FileStats = React.lazy(() => import("@/app/file-stats/page"));
 const History = React.lazy(() => import("@/app/history/page"));
 const BookFlipDevPage = React.lazy(() => import("@/app/dev/book-flip/page"));
+const JmHome = React.lazy(() => import("@/app/jm/page"));
+const JmLogin = React.lazy(() => import("@/app/jm/login/page"));
+const JmSearch = React.lazy(() => import("@/app/jm/search/page"));
+const JmWeek = React.lazy(() => import("@/app/jm/week/page"));
+const JmFavorites = React.lazy(() => import("@/app/jm/favorites/page"));
+const JmHistory = React.lazy(() => import("@/app/jm/history/page"));
+const JmComicDetail = React.lazy(() => import("@/app/jm/comic/[aid]/page"));
+const JmReader = React.lazy(() => import("@/app/jm/reader/[pid]/page"));
 
 /** 动态设置浏览器标签页标题 */
 function SiteTitle() {
@@ -126,6 +134,12 @@ function AppRoutes() {
         <Route path="data-admin" element={<AdminRoute><DataAdmin /></AdminRoute>} />
         <Route path="data-qa" element={<AdminRoute><DataQA /></AdminRoute>} />
         <Route path="file-stats" element={<AdminRoute><FileStats /></AdminRoute>} />
+        <Route path="jm" element={<JmHome />} />
+        <Route path="jm/login" element={<JmLogin />} />
+        <Route path="jm/search" element={<JmSearch />} />
+        <Route path="jm/week" element={<JmWeek />} />
+        <Route path="jm/favorites" element={<JmFavorites />} />
+        <Route path="jm/history" element={<JmHistory />} />
       </Route>
 
       <Route element={<AnimatedOutlet />}>
@@ -135,6 +149,8 @@ function AppRoutes() {
         <Route path="series/:id" element={<SeriesDetail />} />
         <Route path="group/:id" element={<GroupDetail />} />
         <Route path="dev/book-flip" element={<BookFlipDevPage />} />
+        <Route path="jm/comic/:aid" element={<JmComicDetail />} />
+        <Route path="jm/reader/:pid" element={<JmReader />} />
       </Route>
     </Routes>
   );

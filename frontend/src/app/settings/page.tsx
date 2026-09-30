@@ -8,6 +8,7 @@ import {
   Info,
   Brain,
   Globe,
+  Globe2,
   BookOpen,
   Sparkles,
   Github,
@@ -39,6 +40,7 @@ import { defaultReaderOptions } from "@/types/reader";
 import dynamic from "next/dynamic";
 import { appPath } from "@/lib/base-path";
 import { PageHeader } from "@/components/PageHeader";
+import { JmSourcePanel } from "@/components/settings/JmSourcePanel";
 
 /* ── 懒加载面板 ── */
 const LoadingSkeleton = () => (
@@ -93,6 +95,7 @@ const NASDiagnosticsPanel = dynamic(
 /* ── 类型 ── */
 type SettingsTab =
   | "account"
+  | "jm-source"
   | "site"
   | "ai"
   | "scan-rules"
@@ -137,6 +140,7 @@ export default function SettingsPage() {
   const validTabs: SettingsTab[] = [
     "account",
     "reader",
+    "jm-source",
     ...(isAdmin
       ? ["site" as const, "ai" as const, "scan-rules" as const, "users" as const, "libraries" as const, "user-groups" as const, "diagnostics" as const]
       : []),
@@ -171,6 +175,7 @@ export default function SettingsPage() {
       tabs: [
         { id: "account", label: "我的账户", icon: <UserCog className="h-[18px] w-[18px]" />, desc: "密码、昵称", keywords: ["密码", "昵称", "password", "profile"] },
         { id: "reader", label: "阅读与显示", icon: <Eye className="h-[18px] w-[18px]" />, desc: "模式、方向、隐私、语言", keywords: ["reader", "reading", "page", "zoom", "direction", "animation", "progress", "阅读器", "阅读", "方向", "缩放", "翻页", "模式", "进度", "隐私", "成人", "封面", "语言", "中文", "英文"] },
+        { id: "jm-source", label: "在线漫画源", icon: <Globe2 className="h-[18px] w-[18px]" />, desc: "内置服务、代理、画质", keywords: ["在线", "漫画", "JM", "代理", "proxy", "画质", "内置服务"] },
       ],
     },
     {
@@ -266,6 +271,7 @@ export default function SettingsPage() {
       }`}
     >
       {activeTab === "account" && <AccountPanel />}
+      {activeTab === "jm-source" && <JmSourcePanel />}
       {activeTab === "site" && <SiteSettingsPanel />}
       {activeTab === "ai" && <AISettingsPanel />}
       {activeTab === "scan-rules" && <ScanRulesPanel />}

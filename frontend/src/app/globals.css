@@ -1043,3 +1043,9 @@ html.light .image-outline {
     transform: none !important;
   }
 }
+
+/* 隐藏 Edge/IE 原生密码显示按钮,避免与应用内自定义「显示密码」切换重复出现两个按钮 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}

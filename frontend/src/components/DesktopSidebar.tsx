@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   HardDrive,
+  Globe2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
@@ -35,6 +36,7 @@ export default function DesktopSidebar() {
   const primaryItems = [
     { href: "/", icon: LayoutDashboard, label: "首页" },
     { href: "/books", icon: BookMarked, label: "书库" },
+    { href: "/jm", icon: Globe2, label: "在线漫画" },
     { href: "/collections", icon: Layers, label: "合集", adminOnly: true },
     { href: "/recommendations", icon: Globe, label: "推荐" },
     { href: "/history", icon: Clock, label: "阅读历史" },
