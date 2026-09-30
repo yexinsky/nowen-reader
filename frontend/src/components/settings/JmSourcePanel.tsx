@@ -4,7 +4,8 @@
  * 设置 · 在线漫画源面板(PRD docs/PRD_JM_SOURCE.md M1)
  *
  * 在线源已内置(同源 /api/jm),无「服务地址」配置项。
- * 区块:账号(含每日签到)/ 内置服务状态 / 代理设置 / 图片画质 / 维护
+ * 区块:账号 / 内置服务状态 / 代理设置 / 图片画质 / 漫画下载 / 维护
+ * 签到入口只保留在在线漫画首页(/jm),设置页不再重复展示
  * 接口:MOBILE_API.md #1 health、#5 logout、#26 clearHistory、#27/#28 settings
  * 资源约束:health 仅在面板挂载与手动「重新检测」时探测,不做轮询。
  */
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Crown,
+  Download,
   Gauge,
   Loader2,
   LogOut,
@@ -24,7 +26,8 @@ import {
   User,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import { JmSignCalendar } from "@/components/jm/SignCalendar";
+import { JmDownloadTasksPanel } from "@/components/jm/download/DownloadTasks";
+import { useJmDownloadCenter } from "@/lib/jm/downloads";
 import { resolveJmUrl } from "@/lib/jm/config";
 import {
   isJmApiError,
@@ -204,6 +207,25 @@ export function JmSourcePanel() {
     }
   };
 
+  /* ── 下载:默认归档目录(候选来自书库管理)+ 任务面板 ── */
+  const { dirs: downloadDirs, activeCount } = useJmDownloadCenter();
+  const [savingDownloadDir, setSavingDownloadDir] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+
+  const changeDownloadDir = async (dir: string) => {
+    if (!settings || dir === (settings.downloadDir ?? "")) return;
+    setSavingDownloadDir(true);
+    try {
+      const next = await jmPutSettings({ downloadDir: dir });
+      setSettings(next);
+      toast.success(dir ? "默认下载目录已保存" : "已改为使用内置测试目录");
+    } catch (err) {
+      toast.error(errText(err, "下载目录保存失败"));
+    } finally {
+      setSavingDownloadDir(false);
+    }
+  };
+
   /* ── 维护:清空历史(#26)/ 退出登录(#5)── */
   const [clearConfirm, setClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -308,8 +330,6 @@ export function JmSourcePanel() {
                 </Link>
               </div>
             </div>
-            {/* 每日签到(#29/#30),自包含组件 */}
-            <JmSignCalendar />
           </>
         ) : (
           <div className="rounded-lg border border-border bg-card p-5">
@@ -321,7 +341,7 @@ export function JmSourcePanel() {
                 <div>
                   <div className="text-sm font-medium text-foreground">未登录在线源</div>
                   <div className="mt-0.5 text-xs text-muted">
-                    登录后可使用收藏、历史、评论与每日签到
+                    登录后可使用收藏、历史与评论
                   </div>
                 </div>
               </div>
@@ -464,7 +484,57 @@ export function JmSourcePanel() {
         )}
       </section>
 
-      {/* ── 4 维护 ── */}
+      {/* ── 4 下载 ── */}
+      <section className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="flex items-center gap-2.5 border-b border-border/50 px-5 py-3.5">
+          <Download className="h-4 w-4 shrink-0 text-accent" />
+          <h3 className="text-sm font-semibold text-foreground">漫画下载</h3>
+        </div>
+        <div className="space-y-3 p-5">
+          <div>
+            <label className="text-xs text-muted">默认下载目录(打包 zip 后归档到该目录)</label>
+            <select
+              value={settings?.downloadDir ?? ""}
+              disabled={savingDownloadDir || !!settingsPending}
+              onChange={(e) => void changeDownloadDir(e.target.value)}
+              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent disabled:opacity-60"
+            >
+              <option value="">(未设置 → 使用内置测试目录)</option>
+              {downloadDirs.map((dir) => (
+                <option key={dir.path} value={dir.path} disabled={!dir.canManage}>
+                  {dir.label} · {dir.path}
+                  {dir.kind === "test" ? "(不入库)" : ""}
+                  {dir.canManage ? "" : "(无权限)"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTasksOpen(true)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-muted transition-colors hover:bg-card-hover hover:text-foreground"
+            >
+              {savingDownloadDir ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              下载任务{activeCount > 0 ? `(${activeCount})` : ""}
+            </button>
+          </div>
+          <p className="text-xs text-muted">
+            候选目录来自「设置 · 书库管理」中启用的漫画/混合书库(需管理权限);
+            「测试目录(不入库)」用于先验证下载与打包效果,不参与书库扫描。
+          </p>
+          <p className="rounded-lg border border-border/50 bg-background px-3 py-2 text-xs text-muted">
+            下载流程:逐章抓图 → 临时文件夹 → 打包 zip → 归档并清理临时文件夹;
+            同名文件自动追加序号,不覆盖已有内容。
+          </p>
+        </div>
+      </section>
+
+      {/* ── 5 维护 ── */}
       <section className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="flex items-center gap-2.5 border-b border-border/50 px-5 py-3.5">
           <ShieldCheck className="h-4 w-4 shrink-0 text-accent" />
@@ -574,6 +644,9 @@ export function JmSourcePanel() {
           </div>
         </div>
       </section>
+
+      {/* 下载任务面板(设置页内直达,与页面浮动入口共用同一份任务状态) */}
+      <JmDownloadTasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} />
     </div>
   );
 }

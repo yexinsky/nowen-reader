@@ -213,6 +213,8 @@ export type JmImageQuality = "high" | "medium" | "low";
 export interface JmSettings {
   proxy: string;
   imageQuality: JmImageQuality;
+  /** 批量下载默认归档目录(书库管理中的目录;空 = 用内置测试目录) */
+  downloadDir: string;
   mock: boolean;
 }
 
@@ -238,6 +240,65 @@ export interface JmHealth {
 export interface JmLoginResult {
   token: string;
   userInfo: JmUserInfo;
+}
+
+/* ── 批量下载(私有扩展,非 MOBILE_API.md 契约) ── */
+
+/** 下载目录候选(书库管理目录 + 内置测试目录) */
+export interface JmDownloadDir {
+  label: string;
+  path: string;
+  kind: "library" | "test";
+  libraryId?: string;
+  libraryType?: string;
+  /** 当前用户是否有该书库的管理权限(无权限则不可选) */
+  canManage: boolean;
+  isDefault: boolean;
+  exists: boolean;
+}
+
+export type JmDownloadStatus = "queued" | "running" | "packing" | "done" | "failed" | "canceled";
+export type JmDownloadChapterState = "pending" | "running" | "done" | "failed";
+
+export interface JmDownloadChapter {
+  pid: string;
+  title: string;
+  order: number;
+  state: JmDownloadChapterState;
+  total: number;
+  done: number;
+  error?: string;
+}
+
+export interface JmDownloadTask {
+  id: string;
+  aid: string;
+  title: string;
+  author: string;
+  destDir: string;
+  destLabel: string;
+  libraryId?: string;
+  status: JmDownloadStatus;
+  error?: string;
+  /** 部分章节失败时的提示(任务仍完成,zip 已生成) */
+  warning?: string;
+  chapters: JmDownloadChapter[];
+  totalImages: number;
+  doneImages: number;
+  zipName?: string;
+  zipPath?: string;
+  zipSize?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JmDownloadStartParams {
+  aid?: string;
+  title?: string;
+  author?: string;
+  /** 指定章节;缺省 = 全部章节 */
+  pids?: string[];
+  destDir: string;
 }
 
 /* ── 错误码(§0.3) ── */

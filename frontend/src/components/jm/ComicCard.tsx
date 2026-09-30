@@ -10,10 +10,11 @@
  */
 
 import Link from "next/link";
-import { Eye, Heart, ImageOff, Images } from "lucide-react";
+import { Check, Eye, Heart, ImageOff, Images } from "lucide-react";
 import { isNSFW } from "@/lib/nsfw";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { resolveJmUrl } from "@/lib/jm/config";
+import { useJmBatchSelection } from "@/components/jm/download/BatchDownload";
 import type { JmComicItem } from "@/lib/jm/types";
 
 function trimTrailingZero(s: string): string {
@@ -31,6 +32,10 @@ function formatCount(n: number): string {
 /** 精确导出签名:其他板块(收藏/历史/详情)依赖此签名,勿改动 */
 export function JmComicCard({ comic }: { comic: JmComicItem }) {
   const { enabled: privacyEnabled, blurNSFW } = usePrivacyMode();
+  // 多选模式(可选能力,由上层 JmBatchSelectionProvider 注入;未包容器时为 null)
+  const batch = useJmBatchSelection();
+  const selecting = batch?.selectMode ?? false;
+  const checked = batch?.isSelected(comic.aid) ?? false;
   // NSFW 判定:标签优先、标题兜底;隐私模式 + 模糊开关同时开启才遮蔽
   const shouldBlur =
     isNSFW({ tags: comic.tags, title: comic.title }) && privacyEnabled && blurNSFW;
@@ -39,7 +44,18 @@ export function JmComicCard({ comic }: { comic: JmComicItem }) {
 
   return (
     <div className="group flex min-w-0 flex-col">
-      <Link href={detailHref} className="block" aria-label={comic.title}>
+      <Link
+        href={detailHref}
+        className="block"
+        aria-label={comic.title}
+        onClick={(e) => {
+          // 多选模式下封面点击 = 切换选中,不跳转(标题仍可进详情)
+          if (selecting && batch) {
+            e.preventDefault();
+            batch.toggle(comic.aid);
+          }
+        }}
+      >
         <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-muted/10">
           {coverUrl ? (
             <img
@@ -54,6 +70,15 @@ export function JmComicCard({ comic }: { comic: JmComicItem }) {
             <div className="flex h-full w-full items-center justify-center text-muted/30">
               <ImageOff className="h-8 w-8" />
             </div>
+          )}
+          {selecting && (
+            <span
+              className={`absolute left-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md border shadow-sm ${
+                checked ? "border-accent bg-accent text-white" : "border-white/60 bg-black/40"
+              }`}
+            >
+              {checked && <Check className="h-4 w-4" />}
+            </span>
           )}
           {comic.updateAt && (
             <span className="absolute bottom-1.5 right-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] leading-none text-white/90">

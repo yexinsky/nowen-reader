@@ -24,6 +24,7 @@ import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { resolveJmUrl } from "@/lib/jm/config";
 import { isJmApiError, jmClearHistory, jmHistoryList } from "@/lib/jm/client";
 import { JmBackButton } from "@/components/jm/JmBackButton";
+import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import type { JmHistoryItem } from "@/lib/jm/types";
 
 /** updatedAt(本地时区 ISO8601)→ "YYYY-MM-DD HH:mm";解析失败原样返回 */
@@ -42,7 +43,12 @@ export default function JmHistoryPage() {
         title="在线·阅读历史"
         description="JM 服务端历史,与本地阅读历史相互独立"
         icon={History}
-        actions={<JmBackButton />}
+        actions={
+          <>
+            <JmDownloadTasksButton />
+            <JmBackButton />
+          </>
+        }
       />
       <PageContent width="management">
         <JmGate>

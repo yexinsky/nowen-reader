@@ -640,3 +640,142 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 | 5 | docs/API.md §11（like 关键字） | msg 关键字 "`取消`→false，`点赞/喜歡`→true" | live 代码判定词为 `取消` / `点赞`、`點讚`、`喜欢`、`喜歡`（**含简体 `喜欢`**） | **以代码为准**，文档漏列 `喜欢`；不影响语义理解 |
 
 除上述 5 处外，`docs/API.md` 与代码的字段、校验规则、错误码、上游映射核对一致。
+
+---
+
+## 6. 私有扩展：批量下载（`/api/jm/downloads`，仅内置 Go 服务实现）
+
+本节不属于上游移动端 30 端点契约，是 nowen-reader fork 的**本地扩展能力**：把在线漫画整本(或选定章节)抓取到本地，**打包为 zip 归档到书库目录**，并清理下载临时文件夹。
+鉴权只用 nowen 登录（`/api/jm` 组级 `middleware.AuthRequired()`，与 #27/#28 同口径，**不需要 JM token**；游客 JM 会话也能下载）。
+
+### 6.1 端点总览
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/api/jm/downloads/dirs` | 下载目录候选（书库管理中的漫画/混合书库根路径 + 内置测试目录） |
+| GET | `/api/jm/downloads` | 任务列表（新→旧，含已结束；`tempRoot` 为临时沙箱根） |
+| POST | `/api/jm/downloads` | 新建下载任务（异步执行，立即返回任务快照） |
+| GET | `/api/jm/downloads/:id` | 单任务进度 |
+| POST | `/api/jm/downloads/:id/cancel` | 取消任务（排队中/下载中/打包中均可） |
+| DELETE | `/api/jm/downloads/:id` | 移除任务记录（不动已归档 zip） |
+
+响应统一 `{code,msg,data}` 包装；参数非法为 **HTTP 422** `{"detail": ...}`；无目录管理权限为 **HTTP 403**；任务 id 不存在为 `code=3001`。
+
+### 6.2 `GET /api/jm/downloads/dirs`
+
+```json
+{
+  "dirs": [
+    {
+      "label": "漫画库",
+      "path": "D:\comics",
+      "kind": "library",
+      "libraryId": "…",
+      "libraryType": "comic",
+      "canManage": true,
+      "isDefault": false,
+      "exists": true
+    },
+    { "label": "测试目录(不入库)", "path": "<DataDir>\jm\download-test", "kind": "test", "canManage": true, "isDefault": true, "exists": false }
+  ],
+  "testDir": "<DataDir>\jm\download-test"
+}
+```
+
+- 候选来源：`书库管理` 中 `enabled=true` 且 `type` 为 `comic`/`mixed` 的书库根路径（多根路径逐个列出，标签带序号）；末尾固定追加内置**测试目录**（`kind=test`，不参与入库扫描，便于先验证效果）。
+- `canManage` 为当前用户对该书库的管理权限（管理员恒为 true），**false 时前端置灰、后端 403 拒绝**。
+- 默认项：`#28` 设置里的 `downloadDir` 命中候选则用其，否则测试目录。
+
+### 6.3 `POST /api/jm/downloads`
+
+请求体：
+
+```json
+{ "aid": "1477967", "title": "作品名", "author": "作者", "pids": ["123", "124"], "destDir": "D:\comics" }
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `aid` | 与 `pids` 至少一者 | 漫画 id；提供时后端会拉一次 `#14 详情` 以获得标题/作者/章节名与顺序 |
+| `pids` | 与 `aid` 至少一者 | 指定章节（按给定顺序下载）；缺省 = 全部章节 |
+| `title`/`author` | 否 | 展示与 zip 命名用；缺省用详情返回值 |
+| `destDir` | 是 | **必须在 `dirs` 候选白名单内且 `canManage=true`**，否则 422/403；绝对路径 |
+
+成功返回任务快照（同 6.4）。提交成功后会把 `destDir` 记入 `#28` 设置的 `downloadDir`（下次默认选中）。
+
+### 6.4 任务快照
+
+```json
+{
+  "id": "0b45878e8e6e866d",
+  "aid": "1477967",
+  "title": "作品名",
+  "author": "作者",
+  "destDir": "D:\comics",
+  "destLabel": "漫画库",
+  "libraryId": "…",
+  "status": "running",
+  "error": "",
+  "warning": "",
+  "chapters": [
+    { "pid": "123", "title": "第01话 序章", "order": 1, "state": "done", "total": 42, "done": 42 }
+  ],
+  "totalImages": 308,
+  "doneImages": 120,
+  "zipName": "",
+  "zipPath": "",
+  "zipSize": 0,
+  "createdAt": "2026-09-30T22:40:02",
+  "updatedAt": "2026-09-30T22:41:10"
+}
+```
+
+- `status`：`queued`（排队）→ `running`（抓图）→ `packing`（打包/归档）→ `done` / `failed` / `canceled`。
+- `chapters[].state`：`pending` / `running` / `done` / `failed`；`done` 章为成功页数，`failed` 章附 `error`。
+- 部分章节失败但至少一章成功 → `status=done` 且 `warning` 列出失败章节（zip 已生成）；全部失败 → `failed` + `error`。
+- 完成后 `zipName` / `zipPath` / `zipSize` 有值；前端按 1.5s（有活动任务）或 15s（空闲）轮询 `GET /api/jm/downloads`。
+- **空值字段按 `omitempty` 省略**（`error`/`warning`/`zipName`/`zipPath`/`zipSize`/`chapters[].error` 等）；`totalImages` 在收尾统一汇总，抓图过程中始终以 `chapters[].total/done` 为准。
+
+### 6.5 归档与清理规则
+
+1. **抓图**：复用 `#15 章节 + #16 图片管线`（域名池下载 → 乱序还原 → 统一 JPEG），单页失败重试 3 次，整章失败页再补抓 1 轮。
+2. **落盘**：全部中间产物写在自有沙箱 `<DataDir>/jm/download-tmp/<taskId>/`（与目标目录无关）。
+3. **命名**（移植 JMComic-qt `ToolUtil.GetCanSaveName`）：删除 `\ / : * ? " < > |` 与控制字符 → 去尾部 `.` → 去首尾空格 → **截断 83 字符**（`254//3-1`，CJK 3 字节 × 83 ≈ 249 ≤ 255）→ 再去尾部 `.`/空格；清洗后为空回退 `aid`/`untitled`；并按目标目录收紧**全路径 ≤ 240 字节**（Windows MAX_PATH 兜底）。
+4. **目录结构**：章节目录 `第NN话[_标题]`（NN 按总章数补零，便于自然排序），页面 `0001.jpg`…（4 位零填充，阅读顺序）。
+5. **打包**：`zip` + `ZIP_DEFLATED`，条目为 `第NN话/0001.jpg`（相对路径，正斜杠）。
+6. **归档**（仅对库目录）：`<destDir>/<清洗后的标题>.zip`；同名自动追加 ` (2)`…` (99)`，**绝不覆盖或删除目标目录中的既有文件**。
+7. **清理**：任务结束（成功/失败/取消）后整体删除沙箱 `<taskId>/` 目录 —— 即“打包成 zip 后清理下载文件夹”。
+8. **入库**：`destDir` 属于某个书库时，归档后异步触发该书库扫描（全局同时只允许一个扫描，冲突时最多退避重试 3 次 × 15s）。
+
+### 6.6 并发与限流
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `JM_DOWNLOAD_TASK_CONCURRENCY` | `2` | 同时下载的漫画数（批量下载时排队） |
+| `JM_DOWNLOAD_CONCURRENCY` | `3` | 单章内并发抓图数（章节之间串行） |
+
+任务表为**进程内存态**（保留最近 60 条），服务重启即清空；已归档 zip 不受影响。
+
+### 6.7 前端消费对照
+
+| 入口 | 位置 | 行为 |
+|---|---|---|
+| 漫画详情页「下载」按钮 | `app/jm/comic/[aid]/page.tsx` | 打开对话框：章节多选（默认全选）+ 归档目录下拉；并有「下载中 N」快捷入口 |
+| 在线阅读页左下浮动按钮 | `app/jm/reader/[pid]/page.tsx` | 「下载整本 / 下载本章」+ 任务面板（右下角仍是章节导航，互不遮挡） |
+| 列表页多选批量下载 | `app/jm/page.tsx`、`search`、`week`、`favorites` | 网格包裹 `JmBatchSelectionProvider` 后出现「多选下载」：点封面勾选 → 一次为每部漫画建一个任务（全部章节） |
+| 在线漫画页页头「下载任务」按钮 | `app/jm/page.tsx`、`search`、`week`、`favorites`、`history` 的 `PageHeader actions` | 角标显示进行中任务数,点击打开任务面板查看下载队列 |
+| 任务面板 | `components/jm/download/DownloadTasks.tsx` | 进度条 / 章节明细 / 取消 / 移除 / 归档路径(页头按钮、详情页、阅读页、设置页共用同一份任务状态) |
+| 设置 · 在线漫画源 · 漫画下载 | `components/settings/JmSourcePanel.tsx` | 默认下载目录下拉（书库管理目录 + 测试目录）与任务面板入口；`#27/#28` 增加 `downloadDir` 字段 |
+
+### 6.8 测试
+
+```bash
+# 单元测试(名称清洗/打包/归档去重)
+go test ./internal/jm/
+
+# 真实上游端到端(需本地代理可用):抓图 → 打包 → 清理沙箱 → 校验 zip
+JM_LIVE_TEST=1 go test ./internal/jm/ -run TestLiveDownloadPipeline -v -timeout 30m
+
+# HTTP 层端到端(独立 DATABASE_URL/DATA_DIR,不触碰开发库):注册→建库→批量下载→入库扫描
+bash scripts/jm-download-e2e.sh
+```

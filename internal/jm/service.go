@@ -1,8 +1,11 @@
 package jm
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 )
 
 // Service 聚合 JM 源的全部运行时部件,handler 层单例持有。
@@ -14,6 +17,15 @@ type Service struct {
 
 	// envProxy:JM_UPSTREAM_PROXY 环境变量(> settings.json 落盘值 > 默认 10809 的次序中最高优先)
 	envProxy string
+
+	downloads *DownloadManager
+
+	// 图片管线共享实例(阅读器代理与批量下载共用同一份缓存,下载时已读页面直接命中)
+	imgMu          sync.Mutex
+	imgClient      *http.Client
+	imgClientProxy string
+	imgCacheOnce   sync.Once
+	imgCache       *ImageCache
 }
 
 // NewService 创建服务;dataDir 通常为 <DataDir>/jm。
@@ -26,7 +38,38 @@ func NewService(dataDir, envProxy string) *Service {
 		envProxy: envProxy,
 	}
 	svc.backend = NewBackend(store, svc.Sessions)
+	svc.downloads = NewDownloadManager(svc, filepath.Join(dataDir, "download-tmp"))
 	return svc
+}
+
+// Downloads 批量下载任务管理器。
+func (s *Service) Downloads() *DownloadManager { return s.downloads }
+
+// ImageCache 图片落盘缓存单例:<DataDir>/jm/cache,文件数上限读
+// JM_IMAGE_CACHE_LIMIT(默认 500,最小 10)。阅读器代理与下载共用。
+func (s *Service) ImageCache() *ImageCache {
+	s.imgCacheOnce.Do(func() {
+		limit := 500
+		if v := os.Getenv("JM_IMAGE_CACHE_LIMIT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 10 {
+				limit = n
+			}
+		}
+		s.imgCache = NewImageCache(filepath.Join(s.Store.dir, "cache"), limit)
+	})
+	return s.imgCache
+}
+
+// ImageHTTPClient 图片下载客户端(代理取自设置;代理变更自动重建)。
+func (s *Service) ImageHTTPClient() *http.Client {
+	proxy := s.Settings().Proxy
+	s.imgMu.Lock()
+	defer s.imgMu.Unlock()
+	if s.imgClient == nil || s.imgClientProxy != proxy {
+		s.imgClient = NewImageHTTPClient(proxy)
+		s.imgClientProxy = proxy
+	}
+	return s.imgClient
 }
 
 // EnvProxy 返回环境变量代理(可为空)。

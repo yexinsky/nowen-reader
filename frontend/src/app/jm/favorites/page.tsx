@@ -18,9 +18,11 @@ import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicCard } from "@/components/jm/ComicCard";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
+import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
 import { useToast } from "@/components/Toast";
 import { isJmApiError, jmFavoriteFolders, jmFavorites, jmRemoveFavorite } from "@/lib/jm/client";
 import { JmBackButton } from "@/components/jm/JmBackButton";
+import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import type { JmComicItem, JmFavoriteFolder } from "@/lib/jm/types";
 
 const DEFAULT_FOLDER_ID = "0";
@@ -32,7 +34,12 @@ export default function JmFavoritesPage() {
         title="在线收藏"
         description="JM 收藏夹浏览与管理"
         icon={FolderOpen}
-        actions={<JmBackButton />}
+        actions={
+          <>
+            <JmDownloadTasksButton />
+            <JmBackButton />
+          </>
+        }
       />
       <PageContent width="management">
         <JmGate>
@@ -201,6 +208,8 @@ function FavoritesContent() {
       ) : (
         <>
           {/* 网格项包相对定位容器:取消收藏按钮覆盖在卡片右上角,不影响卡片 Link 跳转 */}
+          {/* 多选容器:提供批量下载(卡片读 context,不改 JmComicCard 签名) */}
+          <JmBatchSelectionProvider comics={items}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {items.map((comic, index) => (
               <div key={`${comic.aid}-${index}`} className="group/item relative">
@@ -226,6 +235,7 @@ function FavoritesContent() {
               </div>
             ))}
           </div>
+          </JmBatchSelectionProvider>
 
           {/* 分页尾部 */}
           {loadingMore ? (

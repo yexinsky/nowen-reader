@@ -38,6 +38,7 @@ import { useReaderOptions } from "@/hooks/useReaderOptions";
 import { useTheme } from "@/lib/theme-context";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmChapterNav } from "@/components/jm/reader/JmChapterNav";
+import { JmDownloadFab } from "@/components/jm/download/DownloadTasks";
 import { isJmApiError, jmPhotos, jmReportHistory } from "@/lib/jm/client";
 import { jmImageUrl } from "@/lib/jm/config";
 import { useJmSession } from "@/lib/jm/session";
@@ -519,6 +520,23 @@ export default function JmReaderPage() {
           hasNext={photos.hasNext}
           nextPid={photos.nextPid}
           onNavigate={handleChapterNavigate}
+        />
+
+        {/* AOP 装饰层:批量下载入口(左下浮动按钮,避开右下角章节导航)
+            「下载整本 / 下载本章」→ 服务端逐章抓图并打包 zip,完成后清理临时目录 */}
+        <JmDownloadFab
+          comic={{
+            aid: photos.aid || aidParam,
+            title: photos.title || "JM 漫画",
+            currentPid: pid,
+            currentTitle: photos.title,
+          }}
+          label="批量下载"
+          className={`fixed bottom-5 left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-transform active:scale-95 ${
+            readerTheme === "day"
+              ? "border-black/[0.06] bg-white/85 text-gray-700 shadow-black/10"
+              : "border-white/[0.08] bg-zinc-900/85 text-white/80 shadow-black/40"
+          }`}
         />
       </div>
     );

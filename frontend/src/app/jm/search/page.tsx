@@ -20,8 +20,10 @@ import { AlertTriangle, Loader2, Search } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
+import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
 import { isJmApiError, jmSearch } from "@/lib/jm/client";
 import { JmBackButton } from "@/components/jm/JmBackButton";
+import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import type {
   JmComicItem,
   JmSearchParams,
@@ -174,7 +176,12 @@ export default function JmSearchPage() {
         description="关键字 · 分类 · 排行"
         icon={Search}
         width="management"
-        actions={<JmBackButton />}
+        actions={
+          <>
+            <JmDownloadTasksButton />
+            <JmBackButton />
+          </>
+        }
       />
       <PageContent width="management">
         <JmGate>
@@ -327,12 +334,14 @@ function SearchContent() {
         <div className="mb-3 text-xs text-muted">共 {total.toLocaleString("zh-CN")} 条</div>
       )}
 
-      <JmComicGrid
-        comics={items}
-        emptyText={
-          isBrowseMode ? "该分类下暂无内容" : "没有找到相关漫画,换个关键字或条件试试"
-        }
-      />
+      <JmBatchSelectionProvider comics={items}>
+        <JmComicGrid
+          comics={items}
+          emptyText={
+            isBrowseMode ? "该分类下暂无内容" : "没有找到相关漫画,换个关键字或条件试试"
+          }
+        />
+      </JmBatchSelectionProvider>
 
       {items.length > 0 && (
         <div ref={sentinelRef}>

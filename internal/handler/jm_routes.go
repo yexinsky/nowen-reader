@@ -86,6 +86,7 @@ func registerJMRoutes(api *gin.RouterGroup) {
 		registerJMContentRoutes(jmGroup) // jm_content.go:浏览/搜索/详情/章节
 		registerJMImageRoutes(jmGroup)   // jm_image.go:图片代理
 		registerJMAccountRoutes(jmGroup) // jm_account.go:收藏/评论/点赞/签到
+		registerJMDownloadRoutes(jmGroup) // jm_download.go:批量下载(私有扩展)
 	}
 }
 
@@ -163,12 +164,16 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 	// 无法配置代理,登录又依赖代理,形成引导死锁。
 	g.GET("/settings", func(c *gin.Context) {
 		st := jmService().Settings()
-		jmOK(c, gin.H{"proxy": st.Proxy, "imageQuality": st.ImageQuality, "mock": false})
+		jmOK(c, gin.H{
+			"proxy": st.Proxy, "imageQuality": st.ImageQuality,
+			"downloadDir": st.DownloadDir, "mock": false,
+		})
 	})
 	g.PUT("/settings", func(c *gin.Context) {
 		var body struct {
 			Proxy        *string `json:"proxy"`
 			ImageQuality *string `json:"imageQuality"`
+			DownloadDir  *string `json:"downloadDir"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": err.Error()})
@@ -188,12 +193,18 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 				return
 			}
 		}
+		if body.DownloadDir != nil {
+			st.DownloadDir = *body.DownloadDir
+		}
 		if err := svc.SaveSettings(st); err != nil {
 			jmFailErr(c, err, "保存设置失败")
 			return
 		}
 		st = svc.Settings()
-		jmOK(c, gin.H{"proxy": st.Proxy, "imageQuality": st.ImageQuality, "mock": false})
+		jmOK(c, gin.H{
+			"proxy": st.Proxy, "imageQuality": st.ImageQuality,
+			"downloadDir": st.DownloadDir, "mock": false,
+		})
 	})
 
 	// #24/#25/#26 /api/history — 阅读历史(本地持久化)

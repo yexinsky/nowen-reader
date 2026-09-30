@@ -26,9 +26,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
+import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicCard } from "@/components/jm/ComicCard";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
+import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
 import { JmSignCalendar } from "@/components/jm/SignCalendar";
 import { resolveJmUrl } from "@/lib/jm/config";
 import { isJmApiError, jmLatest, jmPromote, jmSearch, jmSerialization } from "@/lib/jm/client";
@@ -83,7 +85,13 @@ function formatCount(n: number): string {
 export default function JmHomePage() {
   return (
     <>
-      <PageHeader title="在线漫画" description="推荐 · 最新 · 每周热门 · 连载表" icon={Compass} width="management" />
+      <PageHeader
+        title="在线漫画"
+        description="推荐 · 最新 · 每周热门 · 连载表"
+        icon={Compass}
+        width="management"
+        actions={<JmDownloadTasksButton />}
+      />
       <PageContent width="management">
         <JmGate>
           <HomeContent />
@@ -432,7 +440,9 @@ function LatestTab() {
 
   return (
     <div>
-      <JmComicGrid comics={items} emptyText="暂无最新更新" />
+      <JmBatchSelectionProvider comics={items}>
+        <JmComicGrid comics={items} emptyText="暂无最新更新" />
+      </JmBatchSelectionProvider>
       {items.length > 0 && (
         <div ref={sentinelRef}>
           <LoadMoreFooter
@@ -513,7 +523,9 @@ function WeeklyTab() {
 
   return (
     <div>
-      <JmComicGrid comics={items} emptyText="暂无每周热门" />
+      <JmBatchSelectionProvider comics={items}>
+        <JmComicGrid comics={items} emptyText="暂无每周热门" />
+      </JmBatchSelectionProvider>
       {items.length > 0 && (
         <div ref={sentinelRef}>
           <LoadMoreFooter
@@ -628,7 +640,9 @@ function SerializationTab() {
         </div>
       </div>
 
-      <JmComicGrid comics={items} emptyText="该筛选下暂无连载更新" />
+      <JmBatchSelectionProvider comics={items}>
+        <JmComicGrid comics={items} emptyText="该筛选下暂无连载更新" />
+      </JmBatchSelectionProvider>
       {items.length > 0 && (
         <div ref={sentinelRef}>
           <LoadMoreFooter

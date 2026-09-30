@@ -6,54 +6,13 @@ package handler
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
-	"strconv"
-	"sync"
 
 	"github.com/gin-gonic/gin"
-	"github.com/nowen-reader/nowen-reader/internal/config"
 	"github.com/nowen-reader/nowen-reader/internal/jm"
 )
 
-var (
-	jmScrambleRegex = regexp.MustCompile(`^(0|[1-9]\d*)$`)
-
-	jmImageCacheOnce sync.Once
-	jmImageCacheInst *jm.ImageCache
-
-	jmImageClientMu    sync.Mutex
-	jmImageClient      *http.Client
-	jmImageClientProxy string
-)
-
-// jmImageCacheInstance 图片落盘缓存单例:
-// 目录 <DataDir>/jm/cache,文件数上限读环境变量 JM_IMAGE_CACHE_LIMIT(默认 500,最小 10)。
-func jmImageCacheInstance() *jm.ImageCache {
-	jmImageCacheOnce.Do(func() {
-		limit := 500
-		if v := os.Getenv("JM_IMAGE_CACHE_LIMIT"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n >= 10 {
-				limit = n
-			}
-		}
-		jmImageCacheInst = jm.NewImageCache(filepath.Join(config.DataDir(), "jm", "cache"), limit)
-	})
-	return jmImageCacheInst
-}
-
-// jmImageHTTPClient 图片下载客户端(代理取自服务端设置;代理变更自动重建)。
-func jmImageHTTPClient() *http.Client {
-	proxy := jmService().Settings().Proxy
-	jmImageClientMu.Lock()
-	defer jmImageClientMu.Unlock()
-	if jmImageClient == nil || jmImageClientProxy != proxy {
-		jmImageClient = jm.NewImageHTTPClient(proxy)
-		jmImageClientProxy = proxy
-	}
-	return jmImageClient
-}
+var jmScrambleRegex = regexp.MustCompile(`^(0|[1-9]\d*)$`)
 
 func registerJMImageRoutes(g *gin.RouterGroup) {
 	// #16 GET /image?path=&scramble=&aid= — 图片代理(二进制,非 {code,msg,data} 包装)
@@ -77,8 +36,8 @@ func registerJMImageRoutes(g *gin.RouterGroup) {
 
 		data, hit, err := jm.DownloadAndDecode(
 			c.Request.Context(),
-			jmImageHTTPClient(),
-			jmImageCacheInstance(),
+			jmService().ImageHTTPClient(),
+			jmService().ImageCache(),
 			imagePath, scramble, aid,
 			jmService().Settings().ImageQuality,
 		)

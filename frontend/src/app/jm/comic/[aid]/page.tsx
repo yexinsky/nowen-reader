@@ -33,6 +33,7 @@ import { isNSFW } from "@/lib/nsfw";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmCommentPanel } from "@/components/jm/CommentPanel";
+import { JmDownloadButton } from "@/components/jm/download/DownloadButton";
 import { resolveJmUrl } from "@/lib/jm/config";
 import {
   isJmApiError,
@@ -514,6 +515,14 @@ function DetailBody({
             )}
             {favorited ? "已收藏" : "收藏"}
           </button>
+
+          {/* 下载:章节选择 + 归档目录(书库管理目录),打包 zip 后清理临时目录 */}
+          <JmDownloadButton
+            aid={aid}
+            title={detail.title}
+            author={detail.author}
+            chapters={rawEpisodes}
+          />
         </div>
         {actionError && <p className="mt-2 break-all text-xs text-red-400">{actionError}</p>}
       </section>

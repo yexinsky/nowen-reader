@@ -34,6 +34,9 @@ import {
   type JmHistoryReport,
   type JmSettings,
   type JmSignStatus,
+  type JmDownloadDir,
+  type JmDownloadTask,
+  type JmDownloadStartParams,
 } from "./types";
 
 const DEFAULT_TIMEOUT = 30000;
@@ -308,12 +311,15 @@ export function jmGetSettings(): Promise<JmSettings> {
 }
 
 /** 写服务端设置(proxy 空串 = 清除直连;变更即时生效并保持登录态) */
-export function jmPutSettings(patch: { proxy?: string; imageQuality?: JmSettings["imageQuality"] }): Promise<JmSettings> {
+export function jmPutSettings(patch: {
+  proxy?: string;
+  imageQuality?: JmSettings["imageQuality"];
+  downloadDir?: string;
+}): Promise<JmSettings> {
   return jmRequest<JmSettings>("/api/settings", { method: "PUT", body: patch });
 }
 
 /* ── #29-#30 签到 ── */
-
 export function jmSignStatus(): Promise<JmSignStatus> {
   return jmRequest<JmSignStatus>("/api/user/sign");
 }
@@ -321,4 +327,31 @@ export function jmSignStatus(): Promise<JmSignStatus> {
 /** 执行签到(服务端先查后签,幂等);msg 为"签到成功"/"今日已签到"等 */
 export function jmSign(): Promise<{ ok: boolean; msg: string }> {
   return jmRequest<{ ok: boolean; msg: string }>("/api/user/sign", { method: "POST" });
+}
+
+/* ── 批量下载(私有扩展,/api/jm/downloads) ── */
+
+/** 下载目录候选(书库管理中的漫画/混合书库根路径 + 内置测试目录) */
+export function jmDownloadDirs(): Promise<{ dirs: JmDownloadDir[]; testDir: string }> {
+  return jmRequest<{ dirs: JmDownloadDir[]; testDir: string }>("/api/downloads/dirs");
+}
+
+/** 任务列表(新→旧,含已结束任务) */
+export function jmDownloadTasks(): Promise<{ list: JmDownloadTask[]; tempRoot: string }> {
+  return jmRequest<{ list: JmDownloadTask[]; tempRoot: string }>("/api/downloads");
+}
+
+/** 新建下载任务(异步执行,返回任务快照供轮询进度) */
+export function jmDownloadStart(params: JmDownloadStartParams): Promise<JmDownloadTask> {
+  return jmRequest<JmDownloadTask>("/api/downloads", { method: "POST", body: params });
+}
+
+/** 取消进行中的任务 */
+export function jmDownloadCancel(id: string): Promise<{ ok: boolean }> {
+  return jmRequest<{ ok: boolean }>(`/api/downloads/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
+/** 移除任务记录(不动已归档的 zip) */
+export function jmDownloadRemove(id: string): Promise<{ ok: boolean }> {
+  return jmRequest<{ ok: boolean }>(`/api/downloads/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

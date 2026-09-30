@@ -15,8 +15,10 @@ import { CalendarRange } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
+import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
 import { jmWeek, jmWeekFilter } from "@/lib/jm/client";
 import { JmBackButton } from "@/components/jm/JmBackButton";
+import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import type { JmComicItem, JmWeekCategory } from "@/lib/jm/types";
 
 const WEEK_TYPES = [
@@ -40,7 +42,12 @@ export default function JmWeekPage() {
         description="期数 · 类型浏览"
         icon={CalendarRange}
         width="management"
-        actions={<JmBackButton />}
+        actions={
+          <>
+            <JmDownloadTasksButton />
+            <JmBackButton />
+          </>
+        }
       />
       <PageContent width="management">
         <JmGate>
@@ -180,7 +187,9 @@ function WeekBrowser({ categories }: { categories: JmWeekCategory[] }) {
       ) : error ? (
         <JmErrorCard error={error} onRetry={() => load(issueId, type)} />
       ) : (
-        <JmComicGrid comics={items} emptyText="该期暂无内容" />
+        <JmBatchSelectionProvider comics={items}>
+          <JmComicGrid comics={items} emptyText="该期暂无内容" />
+        </JmBatchSelectionProvider>
       )}
     </div>
   );

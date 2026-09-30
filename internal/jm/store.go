@@ -15,9 +15,11 @@ import (
 //   以 aid+pid 为幂等键,updatedAt 倒序。
 
 // Settings 服务端设置(GET/PUT /api/jm/settings 契约)。
+// downloadDir:批量下载默认归档目录(书库管理中的目录,空 = 用内置测试目录)。
 type Settings struct {
 	Proxy        string `json:"proxy"`
 	ImageQuality string `json:"imageQuality"`
+	DownloadDir  string `json:"downloadDir"`
 }
 
 // DefaultProxy 默认上游代理(Python 版 JM_PROXY 默认值)。
@@ -77,6 +79,9 @@ func (s *Store) LoadSettings(envProxy string) Settings {
 	if v, ok := disk["imageQuality"].(string); ok {
 		out.ImageQuality = normalizeQuality(v)
 	}
+	if v, ok := disk["downloadDir"].(string); ok {
+		out.DownloadDir = v
+	}
 	return out
 }
 
@@ -88,6 +93,7 @@ func (s *Store) SaveSettings(st Settings) error {
 	data, err := json.Marshal(map[string]any{
 		"proxy":        st.Proxy,
 		"imageQuality": st.ImageQuality,
+		"downloadDir":  st.DownloadDir,
 	})
 	if err != nil {
 		return err
