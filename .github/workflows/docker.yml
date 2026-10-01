@@ -44,6 +44,11 @@ jobs:
             type=raw,value=latest
             type=sha
 
+      # 5.5 计算短 SHA 注入版本号（应用「关于」页可见，如 sha-3f2ab12）
+      # 不用完整 sha：formatAppVersion 会给数字开头的版本误加 v 前缀
+      - name: Set version arg
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
       # 6. 构建并推送（ARM + amd64）
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -53,5 +58,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=sha-${{ env.SHORT_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
