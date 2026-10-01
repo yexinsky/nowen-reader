@@ -14,7 +14,7 @@
 
 services:
   nowen-reader:
-    image: cropflre/nowen-reader:latest
+    image: ghcr.io/yexinsky/nowen-reader:latest
     container_name: nowen-reader
     restart: unless-stopped
     ports:

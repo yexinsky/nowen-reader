@@ -11,7 +11,7 @@
 
 services:
   nowen-reader:
-    image: cropflre/nowen-reader:latest
+    image: ghcr.io/yexinsky/nowen-reader:latest
     # 平台架构说明：
     # - ARM 设备（树莓派、部分 NAS）: linux/arm64
     # - x86/x64 设备（群晖 x86、威联通 x86）: linux/amd64

@@ -24,7 +24,7 @@
 
 services:
   nowen-reader:
-    image: cropflre/nowen-reader:latest
+    image: ghcr.io/yexinsky/nowen-reader:latest
     # 飞牛OS 常见架构：RK3568/RK3566 为 ARM64，x86 机型为 AMD64
     # 如果你的飞牛设备是 ARM 处理器（如 RK3566），保持 linux/arm64
     # 如果是 x86/x64 处理器，改为 linux/amd64
