@@ -229,13 +229,10 @@ func (c *Client) Login(ctx context.Context, username, password, captcha string) 
 	if err := json.Unmarshal(decoded, &userInfo); err != nil {
 		return nil, nil, errUpstream("登录数据解析失败", err.Error())
 	}
-	// AVS cookie(对齐桌面端:AVS = 返回值 s 字段);并保留响应 Set-Cookie
-	cookies := map[string]string{}
-	for _, ck := range resp.Cookies() {
-		cookies[ck.Name] = ck.Value
-	}
-	if s, ok := userInfo["s"].(string); ok && s != "" {
-		cookies["AVS"] = s
-	}
+	// 会话 cookies:登录客户端累计 jar(/setting 引导)+ 登录响应 Set-Cookie
+	// + AVS(= s 字段)。参考实现的会员请求携带完整 cookie jar,只存响应 cookies
+	// 会让会话客户端裸带 AVS 出网,上游按未登录拒绝(401「請先登入會員」)。
+	avs, _ := userInfo["s"].(string)
+	cookies := mergeLoginCookies(c.cookiesSnapshot(), resp.Cookies(), avs)
 	return userInfo, cookies, nil
 }

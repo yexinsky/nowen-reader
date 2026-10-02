@@ -8,6 +8,7 @@ package handler
 // 分别实现在 jm_content.go / jm_image.go / jm_account.go。
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -134,6 +135,11 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 			return
 		}
 		userInfo := jm.UserInfoMap(userInfoRaw)
+		if cookies["AVS"] == "" {
+			// 上游登录成功却没拿到 AVS(响应无 Set-Cookie 且返回值无 s 字段):
+			// 后续会员端点必 401,留下诊断线索
+			log.Printf("[jm] login ok but no AVS cookie (upstream s missing?) user=%s", body.Username)
+		}
 		proxyKey := svc.Settings().Proxy
 		sess := svc.Sessions.Create(cookies, userInfoRaw, proxyKey)
 		jmOK(c, gin.H{"token": sess.Token, "userInfo": userInfo})

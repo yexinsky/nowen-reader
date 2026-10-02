@@ -136,6 +136,41 @@ func (c *Client) setCookie(name, value string) {
 	c.cookies[name] = value
 }
 
+// cookiesSnapshot 当前 cookies 的副本(登录合并用,避免锁内做 map 字面量)。
+func (c *Client) cookiesSnapshot() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]string, len(c.cookies))
+	for k, v := range c.cookies {
+		out[k] = v
+	}
+	return out
+}
+
+// mergeLoginCookies 合并登录后的会话 cookies,顺序即优先级:
+// ① 登录客户端累计 jar(/setting 引导:__cflb/ipcountry/ipm5/theme 等)——
+//    参考实现(SDK curl_cffi Session + live.py 复用登录客户端)的会员请求
+//    携带这份完整 jar;若只回传登录响应 cookies,会话客户端将裸带 AVS 出网,
+//    上游按未登录拒绝(HTTP 401「請先登入會員」);
+// ② 登录响应 Set-Cookie(服务端会话/刷新的负载均衡 cookie);
+// ③ AVS = 登录返回值 s 字段(SDK login 同款,最后写入保证覆盖)。
+func mergeLoginCookies(jar map[string]string, respCookies []*http.Cookie, avs string) map[string]string {
+	cookies := make(map[string]string, len(jar)+2)
+	for k, v := range jar {
+		cookies[k] = v
+	}
+	for _, ck := range respCookies {
+		if ck == nil || ck.Name == "" || ck.Value == "" {
+			continue
+		}
+		cookies[ck.Name] = ck.Value
+	}
+	if avs != "" {
+		cookies["AVS"] = avs
+	}
+	return cookies
+}
+
 // reqAPI 调用上游移动端 API:GET/POST 表单,响应 AES 解密为 JSON。
 // 返回 decoded 的原始 JSON 字节(通常为 {"code":200,...} 或业务对象)。
 // 业务失败(code!=200)返回 *APIError(2001/1001/1003);网络失败轮换域名重试后返回 2002。
@@ -158,6 +193,29 @@ func (c *Client) reqAPI(ctx context.Context, method, path string, form url.Value
 		lastErr = err
 	}
 	return nil, classifyUpstreamError(lastErr, "")
+}
+
+// apiEnvelope 上游响应外层结构。业务错误信息可能在 msg/errorMsg/message 任一字段
+// (401 类用 errorMsg,如 {"code":401,"errorMsg":"請先登入會員"};live.py 同序读取)。
+type apiEnvelope struct {
+	Code     int             `json:"code"`
+	Msg      json.RawMessage `json:"msg,omitempty"`
+	ErrorMsg json.RawMessage `json:"errorMsg,omitempty"`
+	Message  json.RawMessage `json:"message,omitempty"`
+	Data     json.RawMessage `json:"data,omitempty"`
+}
+
+// message 取第一个非空错误信息字段(msg → errorMsg → message)。
+func (e *apiEnvelope) message() string {
+	for _, raw := range []json.RawMessage{e.Msg, e.ErrorMsg, e.Message} {
+		if len(raw) == 0 {
+			continue
+		}
+		if s := strings.Trim(strings.TrimSpace(string(raw)), `"`); s != "" && s != "null" {
+			return s
+		}
+	}
+	return ""
 }
 
 // doAPIRequest 执行单次请求并解密。specialSecret 非 nil 时用新鲜 ts + 指定密钥
@@ -200,23 +258,22 @@ func (c *Client) doAPIRequest(ctx context.Context, method, endpoint string, form
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		// 上游以 HTTP 401 表达登录态无效(AVS 过期/缺失),契约映射 1002,
+		// 让前端提示重新登录而非笼统的「JM 服务端返回错误」。
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, errUnauthorized()
+		}
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
 	// 响应包装:{"code":200,"data":"<base64(AES)>"};部分端点(如 /setting)响应同为加密包装
-	var envelope struct {
-		Code int             `json:"code"`
-		Msg  json.RawMessage `json:"msg,omitempty"`
-		Data json.RawMessage `json:"data,omitempty"`
-		// 上游风控/错误时可能直接给明文字段
-	}
+	var envelope apiEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		// 非 JSON 响应(可能被上游风控拦截):按上游错误处理
 		return nil, fmt.Errorf("响应非 JSON: %s", truncate(string(raw), 200))
 	}
 	if envelope.Code != 200 {
-		msg := strings.Trim(strings.TrimSpace(string(envelope.Msg)), `"`)
-		return nil, c.mapUpstreamBusinessError(envelope.Code, msg, raw)
+		return nil, c.mapUpstreamBusinessError(envelope.Code, envelope.message(), raw)
 	}
 	// data 为加密字符串;个别端点(未知)可能直接给 JSON 对象,做兼容
 	if len(envelope.Data) > 0 && envelope.Data[0] == '{' {
@@ -234,11 +291,19 @@ func (c *Client) doAPIRequest(ctx context.Context, method, endpoint string, form
 }
 
 // mapUpstreamBusinessError 把上游 code!=200 映射为业务错误(live.py 登录分支同款):
-// msg 含"验证码/captcha" → 1003;其余 → 2001(带 upstream 摘要)。登录 401 类由 handler 层处理。
+// code=401 或 msg 表明未登录 → 1002;msg 含"验证码/captcha" → 1003;其余 → 2001(带 upstream 摘要)。
 func (c *Client) mapUpstreamBusinessError(code int, msg string, raw []byte) error {
+	// 上游 code=401(无论 HTTP 状态):登录态无效(AVS 过期/缺失)→ 1002
+	if code == http.StatusUnauthorized {
+		return errUnauthorized()
+	}
 	lower := strings.ToLower(msg)
-	if strings.Contains(msg, "验证码") || strings.Contains(lower, "captcha") {
+	if strings.Contains(msg, "驗證碼") || strings.Contains(msg, "验证码") || strings.Contains(lower, "captcha") {
 		return errCaptchaRequired()
+	}
+	// 上游会员态校验失败的典型文案(繁/简):「請先登入會員」等 → 1002
+	if strings.Contains(msg, "登入") || strings.Contains(msg, "登录") {
+		return errUnauthorized()
 	}
 	detail := fmt.Sprintf("上游 code=%d msg=%s body=%s", code, msg, truncate(string(raw), 150))
 	_ = detail

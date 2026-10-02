@@ -130,6 +130,7 @@
 - 描述文字升级为 text-foreground/80 leading-relaxed 增强可读性
 ### Fixed
 
+- JM 在线源会员操作（签到/收藏/点赞）全部报「JM 服务端返回错误」：登录后只保存裸 AVS cookie，丢失 `/setting` 引导 cookies（`__cflb`/`ipm5`/`ipcountry` 等），会话客户端裸带 AVS 请求会员端点被上游按未登录拒绝（HTTP 401「請先登入會員」）。现登录时合并完整 cookie jar（对齐 jmcomic SDK 持久 Session 语义）；上游 401/未登录文案映射为 1002「登录已失效」提示重新登录，不再笼统报 2001
 - FolderBrowser 目录浏览器 API 路径错误（`/api/admin/browse` → `/api/browse-dirs`），导致书库管理中目录选择不可用
 - AI 语义搜索未做书库权限过滤，普通用户可搜索到无权限书库内容
 - `.gitignore` 缺少 `site-config.json` 和 `storage-history.json` 规则
