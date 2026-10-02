@@ -10,7 +10,8 @@
  * - 封面经 resolveJmUrl 走服务端代理;NSFW 命中且隐私模糊开启时恒定遮蔽(与 ComicCard 同口径)
  * - 章节 episodes(pid/title/order,imageCount 可缺省勿强依赖)跳 /jm/reader/{pid},支持正序/倒序
  * - 评论区 <JmCommentPanel>;3001 区分为「漫画不存在」;卸载/重查作废在途请求
- * - 标签可点:选中 → 搜索(跳 /jm/search?keyword&searchType=tag 自动搜索)/ 收藏(标签收藏,设备级)
+ * - 标签可点(支持多选):「搜索」取最近点选的一个跳 /jm/search?keyword&searchType=tag 自动搜索;
+ *   「收藏/取消收藏」对选中集合批量切换(乐观更新,失败精确回滚;设备级标签收藏)
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31,6 +32,7 @@ import {
   PlayCircle,
   Search,
   Star,
+  X,
 } from "lucide-react";
 import { isNSFW } from "@/lib/nsfw";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
@@ -203,9 +205,10 @@ function DetailContent({ aid }: { aid: string }) {
     };
   }, [aid]);
 
-  // ── 标签搜索/收藏(私有扩展):选中标签 → 搜索/收藏 操作条 ──
+  // ── 标签搜索/收藏(私有扩展):标签可多选,批量收藏;搜索取最近点选的一个 ──
   const navigate = useNavigate();
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  // 选中集合(数组保序:末位 = 最近点选的标签,「搜索」作用对象)
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [savedTags, setSavedTags] = useState<Set<string>>(() => new Set());
   const [tagBusy, setTagBusy] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
@@ -229,7 +232,7 @@ function DetailContent({ aid }: { aid: string }) {
 
   // 切换漫画:重置选中与错误(收藏集为设备级,无需重拉)
   useEffect(() => {
-    setSelectedTag(null);
+    setSelectedTags([]);
     setTagError(null);
   }, [aid]);
 
@@ -242,36 +245,65 @@ function DetailContent({ aid }: { aid: string }) {
     [navigate]
   );
 
-  /** 标签收藏切换:乐观更新集合,失败回滚 */
-  const handleTagFavorite = useCallback(
-    async (tag: string) => {
-      if (tagBusy) return;
-      setTagBusy(true);
-      setTagError(null);
-      const saved = savedTags.has(tag);
-      setSavedTags((prev) => {
-        const next = new Set(prev);
-        if (saved) next.delete(tag);
-        else next.add(tag);
-        return next;
-      });
-      try {
-        if (saved) await jmRemoveTagFavorite(tag);
-        else await jmAddTagFavorite(tag);
-      } catch (err) {
+  /** 点选/取消点选一个标签(保序,便于「搜索」取最近点选) */
+  const handleToggleTag = useCallback((tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  }, []);
+
+  /** 清空选择 */
+  const handleClearTags = useCallback(() => setSelectedTags([]), []);
+
+  /**
+   * 批量收藏切换:存在未收藏的选中项 → 收藏它们(已收藏项不动);
+   * 全部已收藏 → 批量取消。逐 tag 并发调用(幂等端点),失败项精确回滚。
+   */
+  const handleTagFavorite = useCallback(async () => {
+    if (tagBusy || selectedTags.length === 0) return;
+    setTagBusy(true);
+    setTagError(null);
+    const toAdd = selectedTags.filter((t) => !savedTags.has(t));
+    const toRemove = selectedTags.filter((t) => savedTags.has(t));
+    const removing = toAdd.length === 0; // 全部已收藏 → 批量取消
+    const targets = removing ? toRemove : toAdd;
+    // 乐观更新
+    setSavedTags((prev) => {
+      const next = new Set(prev);
+      targets.forEach((t) => (removing ? next.delete(t) : next.add(t)));
+      return next;
+    });
+    try {
+      const ops = targets.map((t) =>
+        removing ? jmRemoveTagFavorite(t) : jmAddTagFavorite(t)
+      );
+      const results = await Promise.allSettled(ops);
+      const failed = results
+        .map((r, i) => (r.status === "rejected" ? targets[i] : null))
+        .filter((t): t is string => t !== null);
+      if (failed.length > 0) {
+        // 精确回滚失败项
         setSavedTags((prev) => {
           const next = new Set(prev);
-          if (saved) next.add(tag);
-          else next.delete(tag);
+          failed.forEach((t) => (removing ? next.add(t) : next.delete(t)));
           return next;
         });
-        setTagError(actionErrorText(err, saved ? "取消收藏失败,请稍后重试" : "收藏失败,请稍后重试"));
-      } finally {
-        setTagBusy(false);
+        setTagError(
+          `${removing ? "取消收藏" : "收藏"}部分失败(${failed.length}/${targets.length}),请稍后重试`
+        );
       }
-    },
-    [savedTags, tagBusy]
-  );
+    } catch (err) {
+      // 兜底(理论不可达):全量回滚
+      setSavedTags((prev) => {
+        const next = new Set(prev);
+        targets.forEach((t) => (removing ? next.add(t) : next.delete(t)));
+        return next;
+      });
+      setTagError(actionErrorText(err, removing ? "取消收藏失败,请稍后重试" : "收藏失败,请稍后重试"));
+    } finally {
+      setTagBusy(false);
+    }
+  }, [selectedTags, savedTags, tagBusy]);
 
   /** 点赞(#19 切换语义):以响应 liked 为准,null → 回查详情 */
   const handleLike = useCallback(async () => {
@@ -363,11 +395,12 @@ function DetailContent({ aid }: { aid: string }) {
             onFavorite={handleFavorite}
             privacyEnabled={privacyEnabled}
             blurNSFW={blurNSFW}
-            selectedTag={selectedTag}
+            selectedTags={selectedTags}
             savedTags={savedTags}
             tagBusy={tagBusy}
             tagError={tagError}
-            onSelectTag={setSelectedTag}
+            onToggleTag={handleToggleTag}
+            onClearTags={handleClearTags}
             onTagSearch={handleTagSearch}
             onTagFavorite={handleTagFavorite}
           />
@@ -419,14 +452,15 @@ interface DetailBodyProps {
   onFavorite: () => void;
   privacyEnabled: boolean;
   blurNSFW: boolean;
-  /** 标签搜索/收藏(私有扩展):选中态、已收藏集与回调 */
-  selectedTag: string | null;
+  /** 标签搜索/收藏(私有扩展):多选集合、已收藏集与回调 */
+  selectedTags: string[];
   savedTags: Set<string>;
   tagBusy: boolean;
   tagError: string | null;
-  onSelectTag: (tag: string | null) => void;
+  onToggleTag: (tag: string) => void;
+  onClearTags: () => void;
   onTagSearch: (tag: string) => void;
-  onTagFavorite: (tag: string) => void;
+  onTagFavorite: () => void;
 }
 
 function DetailBody({
@@ -448,11 +482,12 @@ function DetailBody({
   onFavorite,
   privacyEnabled,
   blurNSFW,
-  selectedTag,
+  selectedTags,
   savedTags,
   tagBusy,
   tagError,
-  onSelectTag,
+  onToggleTag,
+  onClearTags,
   onTagSearch,
   onTagFavorite,
 }: DetailBodyProps) {
@@ -527,17 +562,17 @@ function DetailBody({
             </div>
             {detail.tags.length > 0 && (
               <div className="mt-3">
-                {/* 标签可点:选中高亮;已收藏标签带 ★ 角标 */}
+                {/* 标签可点(支持多选):选中高亮;已收藏标签带 ★ 角标 */}
                 <div className="flex flex-wrap gap-1.5">
                   {detail.tags.map((tag) => {
-                    const selected = selectedTag === tag;
+                    const selected = selectedTags.includes(tag);
                     const saved = savedTags.has(tag);
                     return (
                       <button
                         key={tag}
                         type="button"
-                        onClick={() => onSelectTag(selected ? null : tag)}
-                        title={saved ? "已收藏的标签" : "点击选中标签"}
+                        onClick={() => onToggleTag(tag)}
+                        title={saved ? "已收藏的标签" : "点击选中(可多选后批量收藏)"}
                         className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
                           selected
                             ? "border-accent/60 bg-accent/10 text-accent"
@@ -550,13 +585,16 @@ function DetailBody({
                     );
                   })}
                 </div>
-                {/* 选中标签 → 搜索 / 收藏 操作条 */}
-                {selectedTag && (
+                {/* 多选操作条:搜索(最近点选的一个)/ 批量收藏切换 / 清空 */}
+                {selectedTags.length > 0 && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] text-muted">已选标签:</span>
+                    <span className="text-[11px] text-muted">
+                      已选 {selectedTags.length} 个标签
+                    </span>
                     <button
                       type="button"
-                      onClick={() => onTagSearch(selectedTag)}
+                      onClick={() => onTagSearch(selectedTags[selectedTags.length - 1])}
+                      title={`搜索最近选中的标签「${selectedTags[selectedTags.length - 1]}」`}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
                     >
                       <Search className="h-3.5 w-3.5" />
@@ -565,18 +603,36 @@ function DetailBody({
                     <button
                       type="button"
                       disabled={tagBusy}
-                      onClick={() => onTagFavorite(selectedTag)}
+                      onClick={onTagFavorite}
+                      title={
+                        selectedTags.some((t) => !savedTags.has(t))
+                          ? `收藏选中的 ${selectedTags.filter((t) => !savedTags.has(t)).length} 个未收藏标签`
+                          : `移除选中的 ${selectedTags.length} 个已收藏标签`
+                      }
                       className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
-                        savedTags.has(selectedTag)
+                        selectedTags.every((t) => savedTags.has(t))
                           ? "border-accent/50 text-accent"
                           : "border-border bg-background text-muted hover:border-accent/50 hover:text-foreground"
                       }`}
                     >
-                      <Star
-                        className="h-3.5 w-3.5"
-                        fill={savedTags.has(selectedTag) ? "currentColor" : "none"}
-                      />
-                      {savedTags.has(selectedTag) ? "已收藏" : "收藏"}
+                      {tagBusy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Star className="h-3.5 w-3.5" />
+                      )}
+                      {selectedTags.some((t) => !savedTags.has(t))
+                        ? `收藏${selectedTags.filter((t) => !savedTags.has(t)).length > 1 ? ` ${selectedTags.filter((t) => !savedTags.has(t)).length} 个` : ""}`
+                        : "取消收藏"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onClearTags}
+                      disabled={tagBusy}
+                      title="清空选择"
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted transition-colors hover:text-foreground disabled:opacity-60"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      清空
                     </button>
                     {tagError && <span className="text-[11px] text-red-400">{tagError}</span>}
                   </div>
