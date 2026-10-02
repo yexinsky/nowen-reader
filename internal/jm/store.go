@@ -11,7 +11,7 @@ import (
 )
 
 // 本地持久化(schema 与 Python 版 store.py 一致,history.json/settings.json 可互迁):
-// - settings.json: {"proxy": str, "imageQuality": "high|medium|low", ...白名单外键不回显}
+// - settings.json: {"proxy": str, "imageQuality": "high|medium|low", "downloadTags": bool, ...白名单外键不回显}
 // - history.json: {"list": [{aid,title,coverUrl,pid,epTitle,imageIndex,updatedAt}...]}
 //   以 aid+pid 为幂等键,updatedAt 倒序。
 // - tag-favorites.json: {"list": [{tag,createdAt}...]}(nowen-reader 私有扩展,
@@ -19,10 +19,12 @@ import (
 
 // Settings 服务端设置(GET/PUT /api/jm/settings 契约)。
 // downloadDir:批量下载默认归档目录(书库管理中的目录,空 = 用内置测试目录)。
+// downloadTags:下载入库后自动把 JM 标签挂到书库 Comic(MOBILE_API.md §6,默认开)。
 type Settings struct {
 	Proxy        string `json:"proxy"`
 	ImageQuality string `json:"imageQuality"`
 	DownloadDir  string `json:"downloadDir"`
+	DownloadTags bool   `json:"downloadTags"`
 }
 
 // DefaultProxy 默认上游代理(Python 版 JM_PROXY 默认值)。
@@ -60,10 +62,11 @@ func atomicWrite(path string, data []byte) error {
 }
 
 // LoadSettings 读设置;proxy 为 null/缺省时回退 JM_PROXY(env)再回退默认值。
+// downloadTags 缺省(旧 settings.json 无该键)为 true。
 func (s *Store) LoadSettings(envProxy string) Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	def := Settings{Proxy: DefaultProxy, ImageQuality: "high"}
+	def := Settings{Proxy: DefaultProxy, ImageQuality: "high", DownloadTags: true}
 	if envProxy != "" {
 		def.Proxy = envProxy
 	}
@@ -85,6 +88,9 @@ func (s *Store) LoadSettings(envProxy string) Settings {
 	if v, ok := disk["downloadDir"].(string); ok {
 		out.DownloadDir = v
 	}
+	if v, ok := disk["downloadTags"].(bool); ok {
+		out.DownloadTags = v
+	}
 	return out
 }
 
@@ -97,6 +103,7 @@ func (s *Store) SaveSettings(st Settings) error {
 		"proxy":        st.Proxy,
 		"imageQuality": st.ImageQuality,
 		"downloadDir":  st.DownloadDir,
+		"downloadTags": st.DownloadTags,
 	})
 	if err != nil {
 		return err

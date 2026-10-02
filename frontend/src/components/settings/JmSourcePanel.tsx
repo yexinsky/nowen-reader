@@ -226,6 +226,22 @@ export function JmSourcePanel() {
     }
   };
 
+  /* ── 下载:自动标签开关(入库后把 JM 标签挂到书库漫画,§6 私有扩展) ── */
+  const [savingDownloadTags, setSavingDownloadTags] = useState(false);
+
+  const changeDownloadTags = async (on: boolean) => {
+    setSavingDownloadTags(true);
+    try {
+      const next = await jmPutSettings({ downloadTags: on });
+      setSettings(next);
+      toast.success(on ? "已开启:下载入库后自动添加标签" : "已关闭:下载入库不再自动添加标签");
+    } catch (err) {
+      toast.error(errText(err, "自动标签设置保存失败"));
+    } finally {
+      setSavingDownloadTags(false);
+    }
+  };
+
   /* ── 维护:清空历史(#26)/ 退出登录(#5)── */
   const [clearConfirm, setClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -508,6 +524,31 @@ export function JmSourcePanel() {
                 </option>
               ))}
             </select>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">下载后自动添加标签</div>
+              <p className="mt-0.5 text-xs text-muted">
+                下载入库后,把该漫画的 JM 标签自动挂到书库记录(可在详情页手动增删)
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label="下载后自动添加标签"
+              aria-checked={settings?.downloadTags ?? true}
+              disabled={savingDownloadTags || !!settingsPending}
+              onClick={() => void changeDownloadTags(!(settings?.downloadTags ?? true))}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
+                (settings?.downloadTags ?? true) ? "bg-accent" : "bg-muted/40"
+              }`}
+            >
+              <span
+                className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                  (settings?.downloadTags ?? true) ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button

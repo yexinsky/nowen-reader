@@ -311,11 +311,12 @@ export function jmGetSettings(): Promise<JmSettings> {
   return jmRequest<JmSettings>("/api/settings");
 }
 
-/** 写服务端设置(proxy 空串 = 清除直连;变更即时生效并保持登录态) */
+/** 写服务端设置(proxy 空串 = 清除直连;downloadTags 控制下载入库自动打标签;变更即时生效并保持登录态) */
 export function jmPutSettings(patch: {
   proxy?: string;
   imageQuality?: JmSettings["imageQuality"];
   downloadDir?: string;
+  downloadTags?: boolean;
 }): Promise<JmSettings> {
   return jmRequest<JmSettings>("/api/settings", { method: "PUT", body: patch });
 }

@@ -18,6 +18,7 @@ import {
   ChevronUp,
   Download,
   Loader2,
+  Tag,
   Trash2,
   X,
   XCircle,
@@ -143,6 +144,15 @@ function TaskCard({ task, onCancel, onRemove }: { task: JmDownloadTask; onCancel
         <p className="mt-2 break-all text-[11px] text-muted">
           <CheckCircle2 className="mr-1 inline h-3 w-3 text-emerald-500" />
           已归档:{task.zipPath}
+        </p>
+      )}
+      {/* 自动标签预告(下载入库且开关开启时,归档后自动挂到书库漫画) */}
+      {task.tags && task.tags.length > 0 && (
+        <p className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted">
+          <Tag className="h-3 w-3" />
+          标签({task.tags.length}):
+          {task.tags.slice(0, 6).join("、")}
+          {task.tags.length > 6 ? "…" : ""}
         </p>
       )}
       {task.status === "failed" && task.error && (

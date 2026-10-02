@@ -70,6 +70,30 @@ func SafeName(name, fallback string) string {
 	return "untitled"
 }
 
+// maxDownloadTags 单本下载自动挂到书库的标签数上限(防上游异常数据写脏书库)。
+const maxDownloadTags = 30
+
+// normalizeJmTags 清洗上游标签用于入库自动打标:trim、剔除空值、按序去重、上限截断。
+func normalizeJmTags(raw []any) []string {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, it := range raw {
+		tag := strings.TrimSpace(stringify(it))
+		if tag == "" {
+			continue
+		}
+		if _, dup := seen[tag]; dup {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+		if len(out) >= maxDownloadTags {
+			break
+		}
+	}
+	return out
+}
+
 // fitPathName 按目标目录收紧名称:保证 dir/name 的全路径字节数不超过
 // maxFullPathLen(Windows MAX_PATH 兜底;CJK 按 UTF-8 字节累计,估算偏保守)。
 func fitPathName(dir, name string, reserveBytes int) string {
@@ -134,6 +158,7 @@ type DownloadTask struct {
 	Aid         string            `json:"aid"`
 	Title       string            `json:"title"`
 	Author      string            `json:"author"`
+	Tags        []string          `json:"tags,omitempty"` // JM 标签(入库后自动挂到书库 Comic,见 MOBILE_API.md §6)
 	DestDir     string            `json:"destDir"`
 	DestLabel   string            `json:"destLabel"`
 	LibraryID   string            `json:"libraryId,omitempty"`
@@ -573,12 +598,13 @@ func (m *DownloadManager) finish(id string, status DownloadStatus, errMsg string
 	})
 }
 
-// resolveEpisodes 解析章节清单:有 aid 先取详情(拿到标题/作者/章节名),
+// resolveEpisodes 解析章节清单:有 aid 先取详情(拿到标题/作者/标签/章节名),
 // 再按请求 pids 过滤(保持请求顺序);详情失败且无 pids 视为失败。
 func (m *DownloadManager) resolveEpisodes(ctx context.Context, t *DownloadTask, pids []string) ([]downloadEpisode, error) {
 	var eps []downloadEpisode
 	if t.Aid != "" {
 		if data, err := m.svc.AnonClient().ComicDetail(ctx, t.Aid); err == nil {
+			tags := normalizeJmTags(listOf(dataMap(data)["tags"]))
 			m.mu.Lock()
 			if tt, ok := m.tasks[t.ID]; ok {
 				if tt.Title == "" {
@@ -587,6 +613,7 @@ func (m *DownloadManager) resolveEpisodes(ctx context.Context, t *DownloadTask, 
 				if tt.Author == "" {
 					tt.Author = fieldStr(dataMap(data), "author")
 				}
+				tt.Tags = tags
 			}
 			m.mu.Unlock()
 			for _, it := range listOf(dataMap(data)["episodes"]) {

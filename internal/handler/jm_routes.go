@@ -173,7 +173,7 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 		st := jmService().Settings()
 		jmOK(c, gin.H{
 			"proxy": st.Proxy, "imageQuality": st.ImageQuality,
-			"downloadDir": st.DownloadDir, "mock": false,
+			"downloadDir": st.DownloadDir, "downloadTags": st.DownloadTags, "mock": false,
 		})
 	})
 	g.PUT("/settings", func(c *gin.Context) {
@@ -181,6 +181,7 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 			Proxy        *string `json:"proxy"`
 			ImageQuality *string `json:"imageQuality"`
 			DownloadDir  *string `json:"downloadDir"`
+			DownloadTags *bool   `json:"downloadTags"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": err.Error()})
@@ -203,6 +204,9 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 		if body.DownloadDir != nil {
 			st.DownloadDir = *body.DownloadDir
 		}
+		if body.DownloadTags != nil {
+			st.DownloadTags = *body.DownloadTags
+		}
 		if err := svc.SaveSettings(st); err != nil {
 			jmFailErr(c, err, "保存设置失败")
 			return
@@ -210,7 +214,7 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 		st = svc.Settings()
 		jmOK(c, gin.H{
 			"proxy": st.Proxy, "imageQuality": st.ImageQuality,
-			"downloadDir": st.DownloadDir, "mock": false,
+			"downloadDir": st.DownloadDir, "downloadTags": st.DownloadTags, "mock": false,
 		})
 	})
 

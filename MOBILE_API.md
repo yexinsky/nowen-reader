@@ -711,6 +711,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
   "aid": "1477967",
   "title": "作品名",
   "author": "作者",
+  "tags": ["巨乳", "JK", "校园"],
   "destDir": "D:\comics",
   "destLabel": "漫画库",
   "libraryId": "…",
@@ -734,7 +735,8 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 - `chapters[].state`：`pending` / `running` / `done` / `failed`；`done` 章为成功页数，`failed` 章附 `error`。
 - 部分章节失败但至少一章成功 → `status=done` 且 `warning` 列出失败章节（zip 已生成）；全部失败 → `failed` + `error`。
 - 完成后 `zipName` / `zipPath` / `zipSize` 有值；前端按 1.5s（有活动任务）或 15s（空闲）轮询 `GET /api/jm/downloads`。
-- **空值字段按 `omitempty` 省略**（`error`/`warning`/`zipName`/`zipPath`/`zipSize`/`chapters[].error` 等）；`totalImages` 在收尾统一汇总，抓图过程中始终以 `chapters[].total/done` 为准。
+- `tags`：任务启动抓详情时捕获的 JM 标签（trim/去重/上限 30），入库自动打标用（见 6.5⑨）；详情抓取失败或按 pids 下载无详情时缺省省略。
+- **空值字段按 `omitempty` 省略**（`error`/`warning`/`tags`/`zipName`/`zipPath`/`zipSize`/`chapters[].error` 等）；`totalImages` 在收尾统一汇总，抓图过程中始终以 `chapters[].total/done` 为准。
 
 ### 6.5 归档与清理规则
 
@@ -746,6 +748,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 6. **归档**（仅对库目录）：`<destDir>/<清洗后的标题>.zip`；同名自动追加 ` (2)`…` (99)`，**绝不覆盖或删除目标目录中的既有文件**。
 7. **清理**：任务结束（成功/失败/取消）后整体删除沙箱 `<taskId>/` 目录 —— 即“打包成 zip 后清理下载文件夹”。
 8. **入库**：`destDir` 属于某个书库时，归档后异步触发该书库扫描（全局同时只允许一个扫描，冲突时最多退避重试 3 次 × 15s）。
+9. **自动标签**（入库后增强，`#28` `downloadTags` 开关控制，默认开）：扫描触发后轮询等待归档 zip 对应的 Comic 记录产生（`PathToID(libraryID, zipName)` 确定性定位，2s 间隔、最长 90s），然后 `AddTagsToComic` 把任务快照的 `tags` 挂到书库漫画（标签不存在自动创建、幂等）。测试目录（非书库）不入库也不打标；轮询超时仅记日志放弃，不影响下载结果；分类**不**自动写。
 
 ### 6.6 并发与限流
 
@@ -764,8 +767,8 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 | 在线阅读页左下浮动按钮 | `app/jm/reader/[pid]/page.tsx` | 「下载整本 / 下载本章」+ 任务面板（右下角仍是章节导航，互不遮挡） |
 | 列表页多选批量下载 | `app/jm/page.tsx`、`search`、`week`、`favorites` | 网格包裹 `JmBatchSelectionProvider` 后出现「多选下载」：点封面勾选 → 一次为每部漫画建一个任务（全部章节） |
 | 在线漫画页页头「下载任务」按钮 | `app/jm/page.tsx`、`search`、`week`、`favorites`、`history` 的 `PageHeader actions` | 角标显示进行中任务数,点击打开任务面板查看下载队列 |
-| 任务面板 | `components/jm/download/DownloadTasks.tsx` | 进度条 / 章节明细 / 取消 / 移除 / 归档路径(页头按钮、详情页、阅读页、设置页共用同一份任务状态) |
-| 设置 · 在线漫画源 · 漫画下载 | `components/settings/JmSourcePanel.tsx` | 默认下载目录下拉（书库管理目录 + 测试目录）与任务面板入口；`#27/#28` 增加 `downloadDir` 字段 |
+| 任务面板 | `components/jm/download/DownloadTasks.tsx` | 进度条 / 章节明细 / 自动标签预告 / 取消 / 移除 / 归档路径(页头按钮、详情页、阅读页、设置页共用同一份任务状态) |
+| 设置 · 在线漫画源 · 漫画下载 | `components/settings/JmSourcePanel.tsx` | 默认下载目录下拉（书库管理目录 + 测试目录）与任务面板入口；`#27/#28` 增加 `downloadDir`、`downloadTags`（下载后自动添加标签开关，默认开）字段 |
 
 ### 6.8 测试
 

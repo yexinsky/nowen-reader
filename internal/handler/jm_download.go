@@ -134,15 +134,18 @@ var (
 	jmDownloadMu sync.Mutex
 )
 
-// jmDownloads 取下载管理器并完成一次性接线(归档回调 → 书库扫描)。
+// jmDownloads 取下载管理器并完成一次性接线(归档回调 → 书库扫描 → 自动标签)。
 func jmDownloads() *jm.DownloadManager {
 	dl := jmService().Downloads()
 	jmDownloadWireOnce.Do(func() {
 		dl.SetOnZip(func(t *jm.DownloadTask) {
 			if t.LibraryID == "" {
-				return // 测试目录/非书库目录:不入库
+				return // 测试目录/非书库目录:不入库、不打标
 			}
-			go jmScanLibraryAfterDownload(t.LibraryID)
+			go func() {
+				jmScanLibraryAfterDownload(t.LibraryID)
+				jmApplyTagsWhenComicExists(t)
+			}()
 		})
 	})
 	return dl
@@ -163,6 +166,47 @@ func jmScanLibraryAfterDownload(libraryID string) {
 		}
 	}
 	log.Printf("[jm] 下载入库扫描放弃(library=%s):扫描任务持续占用", libraryID)
+}
+
+// jmTagPollInterval / jmTagPollTimeout 入库打标签的存在性轮询节奏:
+// 扫描通常数秒内完成;防抖兜底/重试耗尽时靠 fsnotify 补扫,轮询一并兜住。
+const (
+	jmTagPollInterval = 2 * time.Second
+	jmTagPollTimeout  = 90 * time.Second
+)
+
+// jmApplyTagsWhenComicExists 下载入库自动标签(MOBILE_API.md §6):轮询等待
+// 归档 zip 对应的 Comic 记录产生(PathToID 可确定性算出),然后挂 JM 标签。
+// 只记日志、绝不向任务注错——下载本体已成功,打标是附加增强。
+func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
+	if len(t.Tags) == 0 || t.LibraryID == "" || t.ZipName == "" {
+		return
+	}
+	if !jmService().Settings().DownloadTags {
+		return
+	}
+	comicID := store.PathToID(t.LibraryID, t.ZipName)
+	deadline := time.Now().Add(jmTagPollTimeout)
+	for {
+		exists, err := store.ComicRelativePathExists(t.LibraryID, t.ZipName, "")
+		if err == nil && exists {
+			if err := store.AddTagsToComic(comicID, t.Tags); err != nil {
+				log.Printf("[jm] 自动标签写入失败(comic=%s): %v", comicID, err)
+			} else {
+				log.Printf("[jm] 已自动添加 %d 个标签(comic=%s, aid=%s)", len(t.Tags), comicID, t.Aid)
+			}
+			return
+		}
+		if err != nil {
+			log.Printf("[jm] 自动标签:查询入库状态失败(comic=%s): %v", comicID, err)
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[jm] 自动标签放弃(comic=%s):等待入库超时(%s),可手动补标", comicID, jmTagPollTimeout)
+			return
+		}
+		time.Sleep(jmTagPollInterval)
+	}
 }
 
 func registerJMDownloadRoutes(g *gin.RouterGroup) {

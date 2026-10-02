@@ -215,6 +215,8 @@ export interface JmSettings {
   imageQuality: JmImageQuality;
   /** 批量下载默认归档目录(书库管理中的目录;空 = 用内置测试目录) */
   downloadDir: string;
+  /** 下载入库后自动把 JM 标签挂到书库漫画(私有扩展,默认开) */
+  downloadTags: boolean;
   mock: boolean;
 }
 
@@ -275,6 +277,8 @@ export interface JmDownloadTask {
   aid: string;
   title: string;
   author: string;
+  /** JM 标签(入库后自动挂到书库漫画;仅 aid 下载的任务有值) */
+  tags?: string[];
   destDir: string;
   destLabel: string;
   libraryId?: string;
