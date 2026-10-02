@@ -56,6 +56,17 @@ func errUnauthorized() *APIError {
 	return &APIError{Code: CodeUnauthorized, Msg: "登录已失效,请重新登录"}
 }
 
+// UpstreamDetail 提取上游错误详情(2001 的 data.upstream 字段),供服务端日志诊断;
+// 非上游错误或无详情返回空串。
+func UpstreamDetail(err error) string {
+	if apiErr, ok := err.(*APIError); ok {
+		if v, ok := apiErr.Data["upstream"].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // ClassifyError 将任意错误映射为 APIError(handler 层入口)。
 func ClassifyError(err error, defaultMsg string) *APIError {
 	return classifyUpstreamError(err, defaultMsg)

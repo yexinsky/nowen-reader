@@ -99,8 +99,13 @@ func TestMapUpstreamBusinessError(t *testing.T) {
 	if err := cl.mapUpstreamBusinessError(400, "需要验证码", nil); err.(*APIError).Code != CodeCaptchaRequired {
 		t.Fatalf("验证码应映射 1003: %#v", err)
 	}
+	// 点赞类业务失败(HTTP 400 + code 400「評價失敗!」)→ 2001,Msg 保留上游文案
+	err := cl.mapUpstreamBusinessError(400, "評價失敗!", []byte(`{"code":400}`)).(*APIError)
+	if err.Code != CodeUpstream || err.Msg != "評價失敗!" {
+		t.Fatalf("400 評價失敗 应为 2001 带上游文案: %#v", err)
+	}
 	// 其余 → 2001,upstream 带原文
-	err := cl.mapUpstreamBusinessError(500, "服务维护中", []byte(`{"code":500}`)).(*APIError)
+	err = cl.mapUpstreamBusinessError(500, "服务维护中", []byte(`{"code":500}`)).(*APIError)
 	if err.Code != CodeUpstream || err.Msg != "服务维护中" {
 		t.Fatalf("业务错误应映射 2001: %#v", err)
 	}

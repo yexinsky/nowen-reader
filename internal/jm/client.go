@@ -258,6 +258,14 @@ func (c *Client) doAPIRequest(ctx context.Context, method, endpoint string, form
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		// 上游业务失败常以非 200 HTTP + JSON 信封表达(live.py 口径:只看 body 的
+		// code/errorMsg,不看 HTTP 状态),如实测:未登录 /favorite → 401「請先登入會員」、
+		// /like 失败 → 400「評價失敗!」。先按信封解析出业务错误;body 非 JSON 信封
+		// (风控页等)才按裸 HTTP 错误处理。
+		var envBody apiEnvelope
+		if json.Unmarshal(raw, &envBody) == nil && envBody.Code != 0 && envBody.Code != 200 {
+			return nil, c.mapUpstreamBusinessError(envBody.Code, envBody.message(), raw)
+		}
 		// 上游以 HTTP 401 表达登录态无效(AVS 过期/缺失),契约映射 1002,
 		// 让前端提示重新登录而非笼统的「JM 服务端返回错误」。
 		if resp.StatusCode == http.StatusUnauthorized {

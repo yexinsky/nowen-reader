@@ -85,7 +85,7 @@ func registerJMAccountRoutes(g *gin.RouterGroup) {
 		}
 		data, err := jm.LikeComic(c.Request.Context(), cl, c.Param("aid"))
 		if err != nil {
-			log.Printf("[jm] like failed aid=%s: %v", c.Param("aid"), err)
+			log.Printf("[jm] like failed aid=%s: %v upstream=%s", c.Param("aid"), err, jm.UpstreamDetail(err))
 			jmFailErr(c, err, "点赞失败")
 			return
 		}
@@ -157,7 +157,7 @@ func registerJMAccountRoutes(g *gin.RouterGroup) {
 		}
 		data, err := jm.FavoriteAdd(c.Request.Context(), cl, body.Aid)
 		if err != nil {
-			log.Printf("[jm] favorite add failed aid=%s: %v", body.Aid, err)
+			log.Printf("[jm] favorite add failed aid=%s: %v upstream=%s", body.Aid, err, jm.UpstreamDetail(err))
 			jmFailErr(c, err, "收藏操作失败")
 			return
 		}
@@ -176,7 +176,7 @@ func registerJMAccountRoutes(g *gin.RouterGroup) {
 		}
 		data, err := jm.FavoriteDelete(c.Request.Context(), cl, c.Param("aid"))
 		if err != nil {
-			log.Printf("[jm] favorite delete failed aid=%s: %v", c.Param("aid"), err)
+			log.Printf("[jm] favorite delete failed aid=%s: %v upstream=%s", c.Param("aid"), err, jm.UpstreamDetail(err))
 			jmFailErr(c, err, "收藏操作失败")
 			return
 		}
@@ -230,6 +230,7 @@ func registerJMAccountRoutes(g *gin.RouterGroup) {
 		}
 		data, err := jm.SignDo(c.Request.Context(), cl, uid, dailyID)
 		if err != nil {
+			log.Printf("[jm] sign failed uid=%s: %v upstream=%s", uid, err, jm.UpstreamDetail(err))
 			jmFailErr(c, err, "签到失败")
 			return
 		}
