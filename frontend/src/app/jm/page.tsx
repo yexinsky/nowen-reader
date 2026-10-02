@@ -24,6 +24,7 @@ import {
   Loader2,
   Search,
   Sparkles,
+  Tag,
 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
@@ -214,7 +215,7 @@ function UserCard() {
           </div>
         </div>
 
-        {/* 二级页快捷入口:搜索 / 每周必看 / 我的收藏 / 阅读历史 */}
+        {/* 二级页快捷入口:搜索 / 每周必看 / 我的收藏 / 标签收藏 / 阅读历史 */}
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Link
             href="/jm/search"
@@ -236,6 +237,13 @@ function UserCard() {
           >
             <Bookmark className="h-4 w-4" />
             我的收藏
+          </Link>
+          <Link
+            href="/jm/tags"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+          >
+            <Tag className="h-4 w-4" />
+            标签收藏
           </Link>
           <Link
             href="/jm/history"

@@ -313,3 +313,12 @@ export const JM_ERROR_CODES = {
   NOT_FOUND: 3001,
   INTERNAL: 4000,
 } as const;
+
+/* ── 标签收藏(私有扩展,非 MOBILE_API.md 契约) ── */
+
+/** 单条标签收藏(设备级共享,服务端 tag-favorites.json) */
+export interface JmTagFavorite {
+  tag: string;
+  /** 收藏时间,nowen 后端 nowStamp 格式(本地时区秒精度) */
+  createdAt: string;
+}

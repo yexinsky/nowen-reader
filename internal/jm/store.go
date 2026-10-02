@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,6 +14,8 @@ import (
 // - settings.json: {"proxy": str, "imageQuality": "high|medium|low", ...白名单外键不回显}
 // - history.json: {"list": [{aid,title,coverUrl,pid,epTitle,imageIndex,updatedAt}...]}
 //   以 aid+pid 为幂等键,updatedAt 倒序。
+// - tag-favorites.json: {"list": [{tag,createdAt}...]}(nowen-reader 私有扩展,
+//   设备级共享,见 MOBILE_API.md §7);以 tag 为幂等键,createdAt 倒序。
 
 // Settings 服务端设置(GET/PUT /api/jm/settings 契约)。
 // downloadDir:批量下载默认归档目录(书库管理中的目录,空 = 用内置测试目录)。
@@ -190,3 +193,80 @@ func (s *Store) ClearHistory() error {
 
 // nowStamp 本地时区 ISO8601 秲精度(Python datetime.now().isoformat(timespec="seconds") 对齐)。
 func nowStamp() string { return time.Now().Format("2006-01-02T15:04:05") }
+
+/* ── 标签收藏(私有扩展,设备级共享;tag-favorites.json) ── */
+
+// TagFavorite 单条标签收藏(私有扩展端点 GET/POST/DELETE /api/jm/tag-favorites)。
+type TagFavorite struct {
+	Tag       string `json:"tag"`
+	CreatedAt string `json:"createdAt"` // nowStamp 格式,同 history
+}
+
+func (s *Store) tagFavoritesPath() string { return filepath.Join(s.dir, "tag-favorites.json") }
+
+// AddTagFavorite 收藏标签;同 tag 幂等(已存在不重复加、不刷新时间),tag 首尾空白剔除。
+func (s *Store) AddTagFavorite(tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.loadTagFavoritesLocked()
+	for i := range list {
+		if list[i].Tag == tag {
+			return nil
+		}
+	}
+	list = append(list, TagFavorite{Tag: tag, CreatedAt: nowStamp()})
+	return s.saveTagFavoritesLocked(list)
+}
+
+// RemoveTagFavorite 取消收藏;tag 不存在同样幂等成功。
+func (s *Store) RemoveTagFavorite(tag string) error {
+	tag = strings.TrimSpace(tag)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.loadTagFavoritesLocked()
+	kept := list[:0]
+	for _, it := range list {
+		if it.Tag != tag {
+			kept = append(kept, it)
+		}
+	}
+	return s.saveTagFavoritesLocked(kept)
+}
+
+// ListTagFavorites 全量返回(设备级列表小,不分页),createdAt 倒序(最新收藏在前);
+// 同秒并列时保持入库顺序(稳定排序)。
+func (s *Store) ListTagFavorites() ([]TagFavorite, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.loadTagFavoritesLocked()
+	sort.SliceStable(list, func(i, j int) bool {
+		return list[i].CreatedAt > list[j].CreatedAt
+	})
+	return list, nil
+}
+
+func (s *Store) loadTagFavoritesLocked() []TagFavorite {
+	raw, err := os.ReadFile(s.tagFavoritesPath())
+	if err != nil {
+		return nil
+	}
+	var disk struct {
+		List []TagFavorite `json:"list"`
+	}
+	if json.Unmarshal(raw, &disk) != nil {
+		return nil
+	}
+	return disk.List
+}
+
+func (s *Store) saveTagFavoritesLocked(list []TagFavorite) error {
+	data, err := json.Marshal(map[string]any{"list": list})
+	if err != nil {
+		return err
+	}
+	return atomicWrite(s.tagFavoritesPath(), data)
+}

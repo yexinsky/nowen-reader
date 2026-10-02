@@ -178,6 +178,12 @@ Nowen Reader 目前的内容全部来自本地书库(扫描磁盘文件入库)�
 - 入口:设置页(M1)与在线首页用户卡;
 - **#29** 展示签到日历(本月 `days`、`todaySigned`)与签到按钮;**#30** 执行签到(服务端先查后签、幂等),展示返回 `msg`(成功/今日已签)。
 
+### M12 标签搜索与标签收藏(私有扩展,见 MOBILE_API.md §7)
+
+- **详情页(M7)标签可点**:选中标签 → 「搜索」跳 `/jm/search?keyword=<标签>&searchType=tag` 自动搜索(复用 M5 #13,无新上游端点);「收藏」写入标签收藏;
+- **标签收藏**(nowen-reader 私有扩展,`/api/jm/tag-favorites` 增/删/查):设备级共享数据(同 M10 口径、仅 nowen 登录、不需要 JM 登录),持久化于 `<DataDir>/jm/tag-favorites.json`;
+- **入口**:在线首页用户卡快捷区「标签收藏」(`/jm/tags`);搜索页表单上方「我的标签」chips(点击即搜、× 取消收藏)。命名用「标签收藏」与 M9「我的收藏」(漫画收藏夹)区分。
+
 ### 4.12 全局会话与错误处理(跨模块)
 
 - **401 / code=1002**:任一在线源接口命中 → 清除本地 JM 会话 → 轻提示「登录已失效」→ 引导至 M2 登录页;不弹重复提示。
@@ -255,3 +261,6 @@ Nowen Reader 目前的内容全部来自本地书库(扫描磁盘文件入库)�
 | 28 | PUT /api/settings | 🔒 | M1 写代理/画质 |
 | 29 | GET /api/user/sign | 🔒 | M11 签到状态 |
 | 30 | POST /api/user/sign | 🔒 | M11 执行签到 |
+| 扩展 | GET /api/jm/tag-favorites | 🔒 | M12 标签收藏列表 |
+| 扩展 | POST /api/jm/tag-favorites | 🔒 | M12 收藏标签(幂等) |
+| 扩展 | DELETE /api/jm/tag-favorites?tag= | 🔒 | M12 取消标签收藏 |

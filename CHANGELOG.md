@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+### Added (tag-dev 标签搜索/标签收藏)
+
+- 在线漫画详情页标签可点:选中标签 → 「搜索」跳转在线搜索页并自动按该标签执行 `searchType=tag` 搜索;「收藏/已收藏」切换标签收藏(乐观更新,失败回滚),已收藏标签带 ★ 角标
+- 标签收藏(私有扩展):服务端持久化 `<DataDir>/jm/tag-favorites.json`(设备级共享,仅 nowen 登录、不要求 JM 登录);新增端点 `GET/POST/DELETE /api/jm/tag-favorites`(同 tag 幂等)
+- 新页面「标签收藏」`/jm/tags`:点击标签即搜索、× 取消收藏、空态引导;在线首页快捷区加入口
+- 搜索页:支持 `?keyword=&searchType=` URL 参数初始化并自动首搜(详情页标签搜索跳入);表单上方「我的标签」chips(点击即搜、× 就地取消)
+
 ### Added (阅读器体验增强 READER-UX-01)
 
 - 阅读器交互小修：鼠标滚轮翻页（单页/双页模式）、页码输入跳页、快捷键帮助面板（`?` 键）、移动端 double 自动降级 single（<768px）

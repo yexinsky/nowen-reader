@@ -779,3 +779,74 @@ JM_LIVE_TEST=1 go test ./internal/jm/ -run TestLiveDownloadPipeline -v -timeout 
 # HTTP 层端到端(独立 DATABASE_URL/DATA_DIR,不触碰开发库):注册→建库→批量下载→入库扫描
 bash scripts/jm-download-e2e.sh
 ```
+
+---
+
+## 7. 私有扩展：标签收藏（`/api/jm/tag-favorites`，仅内置 Go 服务实现）
+
+本节不属于上游移动端 30 端点契约，是 nowen-reader fork 的**本地扩展能力**：把详情页看到的标签收藏起来，
+在搜索页/标签收藏页**一键按标签搜索**（复用 #13 `searchType=tag&keyword=<标签>`，不新增上游端点）。
+鉴权只用 nowen 登录（`/api/jm` 组级 `middleware.AuthRequired()`，与 #27/#28 同口径，**不需要 JM token**）：
+浏览与搜索本就匿名可用，收藏标签跟随；数据为**设备级共享**（同 #24 阅读历史口径），持久化于
+`<DataDir>/jm/tag-favorites.json`。
+
+### 7.1 端点总览
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/api/jm/tag-favorites` | 已收藏标签列表（全量，createdAt 倒序） |
+| POST | `/api/jm/tag-favorites` | 收藏标签（同 tag 幂等，不刷新收藏时间） |
+| DELETE | `/api/jm/tag-favorites?tag=` | 取消收藏（tag 不存在幂等成功） |
+
+### 7.2 GET /api/jm/tag-favorites — 列表
+
+**响应 data**
+
+```json
+{
+  "list": [{ "tag": "巨乳", "createdAt": "2026-10-02T23:30:00" }],
+  "total": 1
+}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| list | array | `JmTagFavorite`，按 `createdAt` 倒序（同秒并列保持入库顺序，稳定排序） |
+| list[].tag | string | 标签文本（后端 trim，无首尾空白） |
+| list[].createdAt | string | 本地时区 ISO8601 秒精度（同 #24 updatedAt 口径） |
+| total | int | = list.length |
+
+### 7.3 POST /api/jm/tag-favorites — 收藏
+
+**请求体** `{ "tag": "巨乳" }`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| tag | string | ✅ | trim 后 1..64 字符，否则 422 |
+
+**响应 data** `{"ok": true}`；重复收藏幂等成功（列表不重复、时间不刷新）。
+
+**错误**：`422 {"detail": "tag 必填" | "tag 过长(上限 64 字符)"}`。
+
+### 7.4 DELETE /api/jm/tag-favorites?tag= — 取消收藏
+
+**Query** `tag`（必填，URL 编码；走 query 而非路径参数，规避中文/特殊字符路径编码问题）。
+
+**响应 data** `{"ok": true}`；tag 不存在幂等成功。
+**错误**：`422 {"detail": "tag 必填"}`。
+
+### 7.5 前端消费对照
+
+| 入口 | 位置 | 行为 |
+|---|---|---|
+| 详情页标签 | `app/jm/comic/[aid]/page.tsx` | 标签可点选中 → 「搜索」跳 `/jm/search?keyword&searchType=tag`、「收藏/已收藏」切换（乐观更新，失败回滚）；已收藏标签带 ★ 角标 |
+| 搜索页「我的标签」 | `app/jm/search/page.tsx` | 表单上方 chips：点击即按该标签搜索、× 就地取消收藏（失败静默）、「管理」进 /jm/tags；URL 参数初始化表单并自动首搜 |
+| 标签收藏页 | `app/jm/tags/page.tsx`（路由 `/jm/tags`） | chips 管理：点击跳搜索、× 取消收藏（失败回滚+toast）；空态引导到详情页收藏 |
+| 在线首页入口 | `app/jm/page.tsx` UserCard 快捷区 | 「标签收藏」入口（Tag 图标） |
+
+### 7.6 测试
+
+```bash
+# 存储层单测(增查删幂等/trim/倒序/重开重读)
+go test ./internal/jm/ -run TestTagFavorite -v
+```

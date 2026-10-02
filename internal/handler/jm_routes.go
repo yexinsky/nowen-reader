@@ -88,6 +88,7 @@ func registerJMRoutes(api *gin.RouterGroup) {
 		registerJMImageRoutes(jmGroup)   // jm_image.go:图片代理
 		registerJMAccountRoutes(jmGroup) // jm_account.go:收藏/评论/点赞/签到
 		registerJMDownloadRoutes(jmGroup) // jm_download.go:批量下载(私有扩展)
+		registerJMTagFavoriteRoutes(jmGroup) // jm_tag_favorites.go:标签收藏(私有扩展)
 	}
 }
 

@@ -8,6 +8,9 @@
  *   searchType=site 等价缺省不传;m 仅与 y 同传
  * - 分类浏览模式:无关键字时按 mainCategory + sort 浏览(与关键字互斥,由上游路由规则决定)
  * - 排序:最新 mr(默认)/ 最多点击 mv / 月·周·日排行 mv_m/mv_w/mv_t / 最多图片 mp / 最多爱心 tf
+ * - URL 参数初始化:详情页「搜索标签」跳入 ?keyword=<标签>&searchType=tag,
+ *   挂载时读一次并自动执行首搜(searchType 非法值回退 tag)
+ * - 我的标签:顶部展示已收藏标签 chips,点击即按该标签搜索,× 就地取消收藏
  * - 上游怪癖(如实遵循):
  *   1. 日排行 mv_t 带分类时上游返回空 → 自动取消分类并提示;
  *   2. 页码封顶 120 → 达到后提示「仅展示前 120 页结果」并停止加载。
@@ -15,13 +18,15 @@
  * - 在途请求以 reqRef 代际守卫,重查/卸载后丢弃过期响应(与在线首页同模式)
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import Link from "next/link";
+import { AlertTriangle, Loader2, Search, Tag, X } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
 import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
-import { isJmApiError, jmSearch } from "@/lib/jm/client";
+import { isJmApiError, jmRemoveTagFavorite, jmSearch, jmTagFavorites } from "@/lib/jm/client";
 import { JmBackButton } from "@/components/jm/JmBackButton";
 import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import type {
@@ -29,6 +34,7 @@ import type {
   JmSearchParams,
   JmSearchSort,
   JmSearchType,
+  JmTagFavorite,
 } from "@/lib/jm/types";
 
 /** 上游页码封顶:达 120 页停止加载并提示 */
@@ -193,12 +199,42 @@ export default function JmSearchPage() {
 }
 
 function SearchContent() {
-  const [form, setForm] = useState<SearchForm>(INITIAL_FORM);
-  // 首屏即以默认条件(全部 + 最新)进入分类浏览模式
+  // URL 参数初始化(仅挂载读一次;详情页「搜索标签」跳入必然重挂载本路由):
+  // keyword 存在 → searchType 取合法参数值,缺省/非法回退 tag
+  const [searchParams] = useSearchParams();
+  const initialForm = useMemo<SearchForm>(() => {
+    const keyword = (searchParams.get("keyword") ?? "").trim();
+    if (!keyword) return INITIAL_FORM;
+    const st = searchParams.get("searchType");
+    const searchType: JmSearchType = SEARCH_TYPES.some((t) => t.value === st)
+      ? (st as JmSearchType)
+      : "tag";
+    return { ...INITIAL_FORM, keyword, searchType };
+  }, [searchParams]);
+
+  const [form, setForm] = useState<SearchForm>(initialForm);
+  // 首屏即按初始条件搜索(URL 带关键字时自动执行,否则默认分类浏览模式)
   const [submitted, setSubmitted] = useState<SearchConditions>(
-    () => toConditions(INITIAL_FORM).conditions
+    () => toConditions(initialForm).conditions
   );
   const [notice, setNotice] = useState<string | null>(null);
+
+  // 我的标签(收藏的标签):挂载拉取,失败静默为空(不阻塞搜索)
+  const [savedTags, setSavedTags] = useState<JmTagFavorite[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await jmTagFavorites();
+        if (!cancelled) setSavedTags(data.list);
+      } catch {
+        if (!cancelled) setSavedTags([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [items, setItems] = useState<JmComicItem[]>([]);
   const [page, setPage] = useState(0);
@@ -273,6 +309,19 @@ function SearchContent() {
   const updateSearchType = (searchType: JmSearchType) => runSearch({ ...form, searchType });
   const updateMainCategory = (mainCategory: string) => runSearch({ ...form, mainCategory });
 
+  /** 点击「我的标签」chip:按该标签搜索(searchType 强制为 tag) */
+  const searchByTag = (tag: string) => runSearch({ ...form, keyword: tag, searchType: "tag" });
+
+  /** 就地取消标签收藏:乐观移除,失败静默(下次进入恢复) */
+  const removeSavedTag = useCallback(async (tag: string) => {
+    setSavedTags((prev) => prev.filter((it) => it.tag !== tag));
+    try {
+      await jmRemoveTagFavorite(tag);
+    } catch {
+      // 静默:移除失败不回滚 UI,重进页面会恢复真实状态
+    }
+  }, []);
+
   useEffect(() => {
     loadPage(submitted, 1);
   }, [submitted, loadPage]);
@@ -293,6 +342,9 @@ function SearchContent() {
   if (error && items.length === 0) {
     return (
       <div>
+        {savedTags.length > 0 && (
+          <SavedTagsRow tags={savedTags} onSearch={searchByTag} onRemove={removeSavedTag} />
+        )}
         <SearchFormPanel
           form={form}
           keywordMode={keywordMode}
@@ -310,6 +362,9 @@ function SearchContent() {
 
   return (
     <div>
+      {savedTags.length > 0 && (
+        <SavedTagsRow tags={savedTags} onSearch={searchByTag} onRemove={removeSavedTag} />
+      )}
       <SearchFormPanel
         form={form}
         keywordMode={keywordMode}
@@ -364,6 +419,59 @@ function SearchContent() {
 
 const SELECT_CLASS =
   "h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none transition-colors focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 我的标签 chips 行:点击 chip 即按该标签搜索,× 就地取消收藏;「管理」进标签收藏页 */
+function SavedTagsRow({
+  tags,
+  onSearch,
+  onRemove,
+}: {
+  tags: JmTagFavorite[];
+  onSearch: (tag: string) => void;
+  onRemove: (tag: string) => void;
+}) {
+  return (
+    <div className="mb-3 rounded-xl border border-border bg-card px-3.5 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted">
+          <Tag className="h-3.5 w-3.5" />
+          我的标签
+        </span>
+        <Link
+          href="/jm/tags"
+          className="ml-auto shrink-0 text-[11px] text-accent transition-opacity hover:opacity-80"
+        >
+          管理
+        </Link>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {tags.map(({ tag }) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
+          >
+            <button
+              type="button"
+              onClick={() => onSearch(tag)}
+              title={`按标签「${tag}」搜索`}
+              className="transition-colors hover:text-accent"
+            >
+              {tag}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove(tag)}
+              title="取消收藏"
+              className="rounded-full p-0.5 text-muted/60 transition-colors hover:bg-muted/10 hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SearchFormPanel({
   form,

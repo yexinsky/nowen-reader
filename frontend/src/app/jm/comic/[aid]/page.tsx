@@ -10,10 +10,11 @@
  * - 封面经 resolveJmUrl 走服务端代理;NSFW 命中且隐私模糊开启时恒定遮蔽(与 ComicCard 同口径)
  * - 章节 episodes(pid/title/order,imageCount 可缺省勿强依赖)跳 /jm/reader/{pid},支持正序/倒序
  * - 评论区 <JmCommentPanel>;3001 区分为「漫画不存在」;卸载/重查作废在途请求
+ * - 标签可点:选中 → 搜索(跳 /jm/search?keyword&searchType=tag 自动搜索)/ 收藏(标签收藏,设备级)
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDownUp,
   ArrowLeft,
@@ -28,6 +29,8 @@ import {
   ImageOff,
   Loader2,
   PlayCircle,
+  Search,
+  Star,
 } from "lucide-react";
 import { isNSFW } from "@/lib/nsfw";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
@@ -38,10 +41,13 @@ import { resolveJmUrl } from "@/lib/jm/config";
 import {
   isJmApiError,
   jmAddFavorite,
+  jmAddTagFavorite,
   jmComicDetail,
   jmHistoryList,
   jmLike,
   jmRemoveFavorite,
+  jmRemoveTagFavorite,
+  jmTagFavorites,
 } from "@/lib/jm/client";
 import { JM_ERROR_CODES, type JmComicDetail, type JmEpisode } from "@/lib/jm/types";
 
@@ -197,6 +203,76 @@ function DetailContent({ aid }: { aid: string }) {
     };
   }, [aid]);
 
+  // ── 标签搜索/收藏(私有扩展):选中标签 → 搜索/收藏 操作条 ──
+  const navigate = useNavigate();
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [savedTags, setSavedTags] = useState<Set<string>>(() => new Set());
+  const [tagBusy, setTagBusy] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
+
+  // 已收藏标签集:挂载拉取一次(设备级数据);失败静默为空集,不影响浏览
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await jmTagFavorites();
+        if (cancelled) return;
+        setSavedTags(new Set(data.list.map((it) => it.tag)));
+      } catch {
+        if (!cancelled) setSavedTags(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 切换漫画:重置选中与错误(收藏集为设备级,无需重拉)
+  useEffect(() => {
+    setSelectedTag(null);
+    setTagError(null);
+  }, [aid]);
+
+  /** 标签搜索:跳搜索页,URL 参数初始化并自动执行 searchType=tag 搜索 */
+  const handleTagSearch = useCallback(
+    (tag: string) => {
+      const params = new URLSearchParams({ keyword: tag, searchType: "tag" });
+      navigate(`/jm/search?${params.toString()}`);
+    },
+    [navigate]
+  );
+
+  /** 标签收藏切换:乐观更新集合,失败回滚 */
+  const handleTagFavorite = useCallback(
+    async (tag: string) => {
+      if (tagBusy) return;
+      setTagBusy(true);
+      setTagError(null);
+      const saved = savedTags.has(tag);
+      setSavedTags((prev) => {
+        const next = new Set(prev);
+        if (saved) next.delete(tag);
+        else next.add(tag);
+        return next;
+      });
+      try {
+        if (saved) await jmRemoveTagFavorite(tag);
+        else await jmAddTagFavorite(tag);
+      } catch (err) {
+        setSavedTags((prev) => {
+          const next = new Set(prev);
+          if (saved) next.add(tag);
+          else next.delete(tag);
+          return next;
+        });
+        setTagError(actionErrorText(err, saved ? "取消收藏失败,请稍后重试" : "收藏失败,请稍后重试"));
+      } finally {
+        setTagBusy(false);
+      }
+    },
+    [savedTags, tagBusy]
+  );
+
   /** 点赞(#19 切换语义):以响应 liked 为准,null → 回查详情 */
   const handleLike = useCallback(async () => {
     if (likeBusy || !aid) return;
@@ -287,6 +363,13 @@ function DetailContent({ aid }: { aid: string }) {
             onFavorite={handleFavorite}
             privacyEnabled={privacyEnabled}
             blurNSFW={blurNSFW}
+            selectedTag={selectedTag}
+            savedTags={savedTags}
+            tagBusy={tagBusy}
+            tagError={tagError}
+            onSelectTag={setSelectedTag}
+            onTagSearch={handleTagSearch}
+            onTagFavorite={handleTagFavorite}
           />
         )}
       </main>
@@ -336,6 +419,14 @@ interface DetailBodyProps {
   onFavorite: () => void;
   privacyEnabled: boolean;
   blurNSFW: boolean;
+  /** 标签搜索/收藏(私有扩展):选中态、已收藏集与回调 */
+  selectedTag: string | null;
+  savedTags: Set<string>;
+  tagBusy: boolean;
+  tagError: string | null;
+  onSelectTag: (tag: string | null) => void;
+  onTagSearch: (tag: string) => void;
+  onTagFavorite: (tag: string) => void;
 }
 
 function DetailBody({
@@ -357,6 +448,13 @@ function DetailBody({
   onFavorite,
   privacyEnabled,
   blurNSFW,
+  selectedTag,
+  savedTags,
+  tagBusy,
+  tagError,
+  onSelectTag,
+  onTagSearch,
+  onTagFavorite,
 }: DetailBodyProps) {
   // NSFW 遮蔽:与 ComicCard 同口径(标签优先、标题兜底;隐私模式 + 模糊开关同时开启)
   const shouldBlur =
@@ -428,15 +526,61 @@ function DetailBody({
               {detail.updateAt && <span>更新于 {detail.updateAt}</span>}
             </div>
             {detail.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {detail.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded-md border border-border/60 bg-background px-2 py-0.5 text-[11px] text-muted"
-                  >
-                    {tag}
-                  </span>
-                ))}
+              <div className="mt-3">
+                {/* 标签可点:选中高亮;已收藏标签带 ★ 角标 */}
+                <div className="flex flex-wrap gap-1.5">
+                  {detail.tags.map((tag) => {
+                    const selected = selectedTag === tag;
+                    const saved = savedTags.has(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => onSelectTag(selected ? null : tag)}
+                        title={saved ? "已收藏的标签" : "点击选中标签"}
+                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
+                          selected
+                            ? "border-accent/60 bg-accent/10 text-accent"
+                            : "border-border/60 bg-background text-muted hover:border-accent/40 hover:text-foreground"
+                        }`}
+                      >
+                        {saved && <Star className="h-3 w-3 text-amber-400" fill="currentColor" />}
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* 选中标签 → 搜索 / 收藏 操作条 */}
+                {selectedTag && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-muted">已选标签:</span>
+                    <button
+                      type="button"
+                      onClick={() => onTagSearch(selectedTag)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      搜索
+                    </button>
+                    <button
+                      type="button"
+                      disabled={tagBusy}
+                      onClick={() => onTagFavorite(selectedTag)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+                        savedTags.has(selectedTag)
+                          ? "border-accent/50 text-accent"
+                          : "border-border bg-background text-muted hover:border-accent/50 hover:text-foreground"
+                      }`}
+                    >
+                      <Star
+                        className="h-3.5 w-3.5"
+                        fill={savedTags.has(selectedTag) ? "currentColor" : "none"}
+                      />
+                      {savedTags.has(selectedTag) ? "已收藏" : "收藏"}
+                    </button>
+                    {tagError && <span className="text-[11px] text-red-400">{tagError}</span>}
+                  </div>
+                )}
               </div>
             )}
           </div>
