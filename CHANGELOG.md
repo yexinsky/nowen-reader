@@ -1,6 +1,14 @@
 # Changelog
 
 ## Unreleased
+### Added (tag-dev 作者标签)
+
+- 详情页作者可点:作者行改为作者 chips(圆角+👤+紫色系,与标签明显区分);选中后与标签共用操作条——「搜索」按最近点选项类型自动选择 `searchType=tag/author` 跳搜索,「收藏/取消收藏」对标签与作者统一批量切换(乐观更新、失败精确回滚),已收藏作者带 ★ 角标
+- 标签收藏数据模型加 `type`(tag/author,幂等键 type+tag,旧数据无 type 读入归一为 tag 零迁移);同一名值可同时以标签和作者收藏,互不影响
+- 标签收藏页 /jm/tags 分「标签/作者」两组管理;搜索页「我的收藏」chips 同样分组,作者点击即按 `searchType=author` 就地搜索
+- 详情接口新增 `authors: string[]` 字段(上游 author 归一:string→单元素,数组→逐个 trim/去重;`author` 字符串字段保持不变)
+- 端点:POST/DELETE /api/jm/tag-favorites 增加 `type` 参数(缺省 tag,非法 422);GET 列表项透传 type
+
 ### Added (tag-dev 下载入库自动标签)
 
 - JM 批量下载入库后自动把该漫画的 JM 标签挂到书库记录:任务启动抓详情时捕获标签(trim/去重/上限 30),归档扫描后轮询等待 Comic 入库(确定性 ID,2s×45 次兜底)再 `AddTagsToComic` 写入(标签不存在自动建、幂等);测试目录不入库不打标;分类不自动写

@@ -38,6 +38,7 @@ import {
   type JmDownloadTask,
   type JmDownloadStartParams,
   type JmTagFavorite,
+  type JmTagFavoriteType,
 } from "./types";
 
 const DEFAULT_TIMEOUT = 30000;
@@ -358,19 +359,19 @@ export function jmDownloadRemove(id: string): Promise<{ ok: boolean }> {
   return jmRequest<{ ok: boolean }>(`/api/downloads/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-/* ── 标签收藏(私有扩展,/api/jm/tag-favorites) ── */
+/* ── 标签/作者收藏(私有扩展,/api/jm/tag-favorites) ── */
 
-/** 已收藏标签列表(createdAt 倒序;设备级共享,仅需 nowen 登录) */
+/** 收藏列表(type=tag|author,createdAt 倒序;设备级共享,仅需 nowen 登录) */
 export function jmTagFavorites(): Promise<{ list: JmTagFavorite[]; total: number }> {
   return jmRequest<{ list: JmTagFavorite[]; total: number }>("/api/tag-favorites");
 }
 
-/** 收藏标签(同 tag 幂等;tag 由后端 trim,空/超 64 字符 → 422) */
-export function jmAddTagFavorite(tag: string): Promise<{ ok: boolean }> {
-  return jmRequest("/api/tag-favorites", { method: "POST", body: { tag } });
+/** 收藏标签/作者(type=tag|author;同 type+tag 幂等;tag 由后端 trim,空/超 64 字符 → 422) */
+export function jmAddTagFavorite(tag: string, type: JmTagFavoriteType): Promise<{ ok: boolean }> {
+  return jmRequest("/api/tag-favorites", { method: "POST", body: { tag, type } });
 }
 
-/** 取消收藏(tag 不存在幂等成功) */
-export function jmRemoveTagFavorite(tag: string): Promise<{ ok: boolean }> {
-  return jmRequest("/api/tag-favorites", { method: "DELETE", query: { tag } });
+/** 取消收藏(type 缺省 tag;不存在幂等成功) */
+export function jmRemoveTagFavorite(tag: string, type: JmTagFavoriteType): Promise<{ ok: boolean }> {
+  return jmRequest("/api/tag-favorites", { method: "DELETE", query: { tag, type } });
 }

@@ -14,8 +14,9 @@ import (
 // - settings.json: {"proxy": str, "imageQuality": "high|medium|low", "downloadTags": bool, ...白名单外键不回显}
 // - history.json: {"list": [{aid,title,coverUrl,pid,epTitle,imageIndex,updatedAt}...]}
 //   以 aid+pid 为幂等键,updatedAt 倒序。
-// - tag-favorites.json: {"list": [{tag,createdAt}...]}(nowen-reader 私有扩展,
-//   设备级共享,见 MOBILE_API.md §7);以 tag 为幂等键,createdAt 倒序。
+// - tag-favorites.json: {"list": [{type,tag,createdAt}...]}(nowen-reader 私有扩展,
+//   设备级共享,见 MOBILE_API.md §7);幂等键 (type,tag),createdAt 倒序;
+//   type ∈ tag|author,旧数据缺失归一为 tag。
 
 // Settings 服务端设置(GET/PUT /api/jm/settings 契约)。
 // downloadDir:批量下载默认归档目录(书库管理中的目录,空 = 用内置测试目录)。
@@ -201,18 +202,41 @@ func (s *Store) ClearHistory() error {
 // nowStamp 本地时区 ISO8601 秲精度(Python datetime.now().isoformat(timespec="seconds") 对齐)。
 func nowStamp() string { return time.Now().Format("2006-01-02T15:04:05") }
 
-/* ── 标签收藏(私有扩展,设备级共享;tag-favorites.json) ── */
+/* ── 标签/作者收藏(私有扩展,设备级共享;tag-favorites.json) ── */
 
-// TagFavorite 单条标签收藏(私有扩展端点 GET/POST/DELETE /api/jm/tag-favorites)。
+// 收藏类型:标签详情页的 tags(chip 与搜索 searchType=tag)与作者(album 的
+// author 归一数组,搜索 searchType=author)。同一名值可同时以两种类型收藏。
+const (
+	TagFavoriteTypeTag    = "tag"
+	TagFavoriteTypeAuthor = "author"
+)
+
+// normalizeTagFavoriteType 收敛类型:空/未知一律按标签处理(旧数据无 type 字段时的兼容口径)。
+func normalizeTagFavoriteType(s string) string {
+	if s == TagFavoriteTypeAuthor {
+		return TagFavoriteTypeAuthor
+	}
+	return TagFavoriteTypeTag
+}
+
+// ValidTagFavoriteType 显式传入的 type 是否合法(handler 层 422 判定用,空串视为缺省 tag)。
+func ValidTagFavoriteType(s string) bool {
+	return s == "" || s == TagFavoriteTypeTag || s == TagFavoriteTypeAuthor
+}
+
+// TagFavorite 单条标签/作者收藏(私有扩展端点 GET/POST/DELETE /api/jm/tag-favorites)。
 type TagFavorite struct {
+	Type      string `json:"type"` // "tag"|"author";旧数据缺失读入归一为 "tag"
 	Tag       string `json:"tag"`
 	CreatedAt string `json:"createdAt"` // nowStamp 格式,同 history
 }
 
 func (s *Store) tagFavoritesPath() string { return filepath.Join(s.dir, "tag-favorites.json") }
 
-// AddTagFavorite 收藏标签;同 tag 幂等(已存在不重复加、不刷新时间),tag 首尾空白剔除。
-func (s *Store) AddTagFavorite(tag string) error {
+// AddTagFavorite 收藏标签/作者;同 (type,tag) 幂等(已存在不重复加、不刷新时间),
+// tag 首尾空白剔除,type 归一。
+func (s *Store) AddTagFavorite(typ, tag string) error {
+	typ = normalizeTagFavoriteType(typ)
 	tag = strings.TrimSpace(tag)
 	if tag == "" {
 		return nil
@@ -221,23 +245,24 @@ func (s *Store) AddTagFavorite(tag string) error {
 	defer s.mu.Unlock()
 	list := s.loadTagFavoritesLocked()
 	for i := range list {
-		if list[i].Tag == tag {
+		if list[i].Tag == tag && list[i].Type == typ {
 			return nil
 		}
 	}
-	list = append(list, TagFavorite{Tag: tag, CreatedAt: nowStamp()})
+	list = append(list, TagFavorite{Type: typ, Tag: tag, CreatedAt: nowStamp()})
 	return s.saveTagFavoritesLocked(list)
 }
 
-// RemoveTagFavorite 取消收藏;tag 不存在同样幂等成功。
-func (s *Store) RemoveTagFavorite(tag string) error {
+// RemoveTagFavorite 取消收藏;(type,tag) 不存在同样幂等成功。
+func (s *Store) RemoveTagFavorite(typ, tag string) error {
+	typ = normalizeTagFavoriteType(typ)
 	tag = strings.TrimSpace(tag)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.loadTagFavoritesLocked()
 	kept := list[:0]
 	for _, it := range list {
-		if it.Tag != tag {
+		if it.Tag != tag || it.Type != typ {
 			kept = append(kept, it)
 		}
 	}
@@ -266,6 +291,10 @@ func (s *Store) loadTagFavoritesLocked() []TagFavorite {
 	}
 	if json.Unmarshal(raw, &disk) != nil {
 		return nil
+	}
+	for i := range disk.List {
+		// 旧数据(升级前写入)无 type 字段 → 全部是标签
+		disk.List[i].Type = normalizeTagFavoriteType(disk.List[i].Type)
 	}
 	return disk.List
 }

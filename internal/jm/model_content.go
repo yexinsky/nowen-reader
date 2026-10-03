@@ -234,6 +234,7 @@ func mapAlbumDetail(data []byte, aid string) (any, error) {
 			author = stringify(v[0])
 		}
 	}
+	authors := albumAuthors(raw["author"])
 	// update_at 优先,addtime 兜底(Python `or` 语义)
 	var ts any
 	if truthyAny(raw["update_at"]) {
@@ -245,6 +246,7 @@ func mapAlbumDetail(data []byte, aid string) (any, error) {
 		"aid":         aidResolved,
 		"title":       fieldStr(raw, "name"),
 		"author":      author,
+		"authors":     authors,
 		"coverUrl":    coverURL(aidResolved),
 		"description": stripHTML(fieldStr(raw, "description")),
 		"tags":        append([]any{}, listOf(raw["tags"])...),
@@ -258,6 +260,39 @@ func mapAlbumDetail(data []byte, aid string) (any, error) {
 		"favorited":   boolOf(raw["is_favorite"]),
 		"episodes":    albumEpisodeList(raw, aidResolved),
 	}, nil
+}
+
+// albumAuthors 上游 author 字段(string 或数组)→ 归一作者名数组:trim、剔空、
+// 按序去重;上游缺失/为空 → 空数组(前端回退纯文本展示)。作者标签与作者搜索
+// (searchType=author)使用;探针口径:aid=1475046 实测上游 author=["N/A"](数组)。
+func albumAuthors(v any) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	switch t := v.(type) {
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			out = append(out, s)
+		}
+	case []any:
+		for _, it := range t {
+			s := strings.TrimSpace(stringify(it))
+			if s == "" {
+				continue
+			}
+			if _, dup := seen[s]; dup {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	default:
+		if v != nil {
+			if s := strings.TrimSpace(stringify(v)); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 // albumEpisodeList 契约 episodes(live.py detail):series 各章按 sort 排序

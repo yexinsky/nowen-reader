@@ -92,6 +92,41 @@ print(f"标签收藏 DELETE OK: {tags}")
 PY
 [ $? -eq 0 ] || exit 1
 
+echo "== 作者类型收藏往返 + 同名共存(type+tag 幂等键) =="
+printf '{"tag":"E2E同名人","type":"tag"}' > "$TMP/tag-payload.json"
+printf '{"tag":"E2E同名人","type":"author"}' > "$TMP/author-payload.json"
+printf 'E2E同名人' > "$TMP/same-name.txt"
+curl -s -b "$COOKIE" -X POST "$BASE/api/jm/tag-favorites" -H 'Content-Type: application/json' --data-binary @"$TMP/tag-payload.json" >/dev/null
+curl -s -b "$COOKIE" -X POST "$BASE/api/jm/tag-favorites" -H 'Content-Type: application/json' --data-binary @"$TMP/author-payload.json" | head -c 120; echo
+curl -s -b "$COOKIE" "$BASE/api/jm/tag-favorites" > "$TMP/tags.json"
+python - "$TMP/tags.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+items=(d.get('data') or {}).get('list') or []
+same=[it for it in items if it['tag']=='E2E同名人']
+assert len(same)==2 and {it['type'] for it in same}=={'tag','author'}, f"同名双类型应共存: {items}"
+print("同名双类型共存 OK:", [(it['type'],it['tag']) for it in same])
+PY
+[ $? -eq 0 ] || exit 1
+ENC2=$(python - "$TMP/same-name.txt" <<'PY'
+import sys,urllib.parse
+print(urllib.parse.quote(open(sys.argv[1],encoding='utf-8').read().strip()))
+PY
+)
+curl -s -b "$COOKIE" -X DELETE "$BASE/api/jm/tag-favorites?tag=$ENC2&type=author" >/dev/null
+curl -s -b "$COOKIE" "$BASE/api/jm/tag-favorites" > "$TMP/tags.json"
+python - "$TMP/tags.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+items=(d.get('data') or {}).get('list') or []
+same=[it for it in items if it['tag']=='E2E同名人']
+assert len(same)==1 and same[0]['type']=='tag', f"删除 author 型后应剩 tag 型: {items}"
+print("按 type 删除互不影响 OK:", [(it['type'],it['tag']) for it in same])
+PY
+[ $? -eq 0 ] || exit 1
+# 清理残留(保持脚本无副作用):tag 型也删掉
+curl -s -b "$COOKIE" -X DELETE "$BASE/api/jm/tag-favorites?tag=$ENC2&type=tag" >/dev/null
+
 echo "== 取最新列表前 2 部作为下载目标 =="
 curl -s -b "$COOKIE" "$BASE/api/jm/comics/latest?page=1" > "$TMP/latest.json"
 python - "$TMP/latest.json" <<'PY'

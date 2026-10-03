@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Link from "next/link";
-import { AlertTriangle, Loader2, Search, Tag, X } from "lucide-react";
+import { AlertTriangle, Loader2, Search, Tag, User, X } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
@@ -310,13 +310,15 @@ function SearchContent() {
   const updateMainCategory = (mainCategory: string) => runSearch({ ...form, mainCategory });
 
   /** 点击「我的标签」chip:按该标签搜索(searchType 强制为 tag) */
-  const searchByTag = (tag: string) => runSearch({ ...form, keyword: tag, searchType: "tag" });
+  /** 点「我的标签/作者」chip:按该项类型(searchType=tag/author)就地搜索 */
+  const searchByItem = (it: Pick<JmTagFavorite, "type" | "tag">) =>
+    runSearch({ ...form, keyword: it.tag, searchType: it.type });
 
-  /** 就地取消标签收藏:乐观移除,失败静默(下次进入恢复) */
-  const removeSavedTag = useCallback(async (tag: string) => {
-    setSavedTags((prev) => prev.filter((it) => it.tag !== tag));
+  /** 就地取消收藏:乐观移除,失败静默(下次进入恢复) */
+  const removeSavedItem = useCallback(async (it: Pick<JmTagFavorite, "type" | "tag">) => {
+    setSavedTags((prev) => prev.filter((x) => !(x.type === it.type && x.tag === it.tag)));
     try {
-      await jmRemoveTagFavorite(tag);
+      await jmRemoveTagFavorite(it.tag, it.type);
     } catch {
       // 静默:移除失败不回滚 UI,重进页面会恢复真实状态
     }
@@ -343,7 +345,7 @@ function SearchContent() {
     return (
       <div>
         {savedTags.length > 0 && (
-          <SavedTagsRow tags={savedTags} onSearch={searchByTag} onRemove={removeSavedTag} />
+          <SavedTagsRow tags={savedTags} onSearch={searchByItem} onRemove={removeSavedItem} />
         )}
         <SearchFormPanel
           form={form}
@@ -363,7 +365,7 @@ function SearchContent() {
   return (
     <div>
       {savedTags.length > 0 && (
-        <SavedTagsRow tags={savedTags} onSearch={searchByTag} onRemove={removeSavedTag} />
+        <SavedTagsRow tags={savedTags} onSearch={searchByItem} onRemove={removeSavedItem} />
       )}
       <SearchFormPanel
         form={form}
@@ -427,15 +429,17 @@ function SavedTagsRow({
   onRemove,
 }: {
   tags: JmTagFavorite[];
-  onSearch: (tag: string) => void;
-  onRemove: (tag: string) => void;
+  onSearch: (it: Pick<JmTagFavorite, "type" | "tag">) => void;
+  onRemove: (it: Pick<JmTagFavorite, "type" | "tag">) => void;
 }) {
+  const tagItems = tags.filter((it) => it.type === "tag");
+  const authorItems = tags.filter((it) => it.type === "author");
   return (
     <div className="mb-3 rounded-xl border border-border bg-card px-3.5 py-2.5">
       <div className="flex items-center gap-2">
         <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted">
           <Tag className="h-3.5 w-3.5" />
-          我的标签
+          我的收藏
         </span>
         <Link
           href="/jm/tags"
@@ -445,14 +449,14 @@ function SavedTagsRow({
         </Link>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {tags.map(({ tag }) => (
+        {tagItems.map(({ tag, type }) => (
           <span
-            key={tag}
+            key={`${type} ${tag}`}
             className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
           >
             <button
               type="button"
-              onClick={() => onSearch(tag)}
+              onClick={() => onSearch({ type, tag })}
               title={`按标签「${tag}」搜索`}
               className="transition-colors hover:text-accent"
             >
@@ -460,7 +464,31 @@ function SavedTagsRow({
             </button>
             <button
               type="button"
-              onClick={() => onRemove(tag)}
+              onClick={() => onRemove({ type, tag })}
+              title="取消收藏"
+              className="rounded-full p-0.5 text-muted/60 transition-colors hover:bg-muted/10 hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        {authorItems.map(({ tag, type }) => (
+          <span
+            key={`${type} ${tag}`}
+            className="inline-flex items-center gap-0.5 rounded-full border border-violet-400/40 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
+          >
+            <button
+              type="button"
+              onClick={() => onSearch({ type, tag })}
+              title={`按作者「${tag}」搜索`}
+              className="inline-flex items-center gap-0.5 transition-colors hover:text-accent"
+            >
+              <User className="h-3 w-3 text-violet-400" />
+              {tag}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove({ type, tag })}
               title="取消收藏"
               className="rounded-full p-0.5 text-muted/60 transition-colors hover:bg-muted/10 hover:text-foreground"
             >

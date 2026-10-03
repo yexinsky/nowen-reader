@@ -146,6 +146,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 | `aid` | string | 漫画 id | `str(aid)` |
 | `title` | string | 标题 | 上游 `name`，空 → `""` |
 | `author` | string | 作者 | 上游 `author`，缺失 → `""` |
+| `authors` | string[] | 作者名数组（上游 `author` 归一:string→单元素,数组→逐个 trim/去重;缺失 → `[]`);作者标签与 `searchType=author` 搜索用 |
 | `coverUrl` | string | 封面 URL（经 `/api/image`，可直接 `<img src>`） | 上游 `image`；绝对 URL 只保留路径部分；**剥离 `?query`**（如 serialization 列表项的 `?u=` 缓存参数，path 白名单不含 query）；反斜杠归一为 `/`；无 image 时回退 `media/albums/{aid}_3x4.jpg` |
 | `tags` | string[] | 标签 | 上游缺失 → `[]` |
 | `category` | string | 主分类名 | 上游 `category.title`；非 dict 时 `str()` |
@@ -370,6 +371,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
   | `aid` | string | 漫画 id（live 取上游 `id`） |
   | `title` | string | 标题 |
   | `author` | string | 作者；live 取上游 `author[0]`（数组转单值），缺失时回退 `"default_author"` |
+  | `authors` | string[] | 作者名数组（上游 `author` 归一:string→单元素,数组→逐个 trim/剔空/去重;缺失 → `[]`);供作者标签/作者搜索(`searchType=author`)使用 |
   | `coverUrl` | string | `media/albums/{aid}_3x4.jpg` 经 `/api/image` |
   | `description` | string | 简介（live 经 `_strip_html` 剥 HTML+实体还原） |
   | `tags` | string[] | 标签 |
@@ -807,25 +809,30 @@ bash scripts/jm-download-e2e.sh
 
 ```json
 {
-  "list": [{ "tag": "巨乳", "createdAt": "2026-10-02T23:30:00" }],
-  "total": 1
+  "list": [
+    { "type": "tag", "tag": "巨乳", "createdAt": "2026-10-02T23:30:00" },
+    { "type": "author", "tag": "山本ティナ", "createdAt": "2026-10-03T01:00:00" }
+  ],
+  "total": 2
 }
 ```
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | list | array | `JmTagFavorite`，按 `createdAt` 倒序（同秒并列保持入库顺序，稳定排序） |
-| list[].tag | string | 标签文本（后端 trim，无首尾空白） |
+| list[].type | string | `tag`（标签，searchType=tag）\|`author`（作者，searchType=author）；旧数据缺失读入归一为 `tag` |
+| list[].tag | string | 名值（后端 trim，无首尾空白）；同一名值可同时以 tag/author 两种类型收藏 |
 | list[].createdAt | string | 本地时区 ISO8601 秒精度（同 #24 updatedAt 口径） |
 | total | int | = list.length |
 
 ### 7.3 POST /api/jm/tag-favorites — 收藏
 
-**请求体** `{ "tag": "巨乳" }`
+**请求体** `{ "tag": "巨乳", "type": "tag" }`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | tag | string | ✅ | trim 后 1..64 字符，否则 422 |
+| type | string | 否 | `tag`(缺省)\|`author`;非法值 → 422。幂等键 = type+tag(同一名值可双类型共存) |
 
 **响应 data** `{"ok": true}`；重复收藏幂等成功（列表不重复、时间不刷新）。
 
@@ -833,18 +840,18 @@ bash scripts/jm-download-e2e.sh
 
 ### 7.4 DELETE /api/jm/tag-favorites?tag= — 取消收藏
 
-**Query** `tag`（必填，URL 编码；走 query 而非路径参数，规避中文/特殊字符路径编码问题）。
+**Query** `tag`（必填，URL 编码；走 query 而非路径参数，规避中文/特殊字符路径编码问题）、`type`（可选，`tag` 缺省\|`author`，非法 → 422）。
 
-**响应 data** `{"ok": true}`；tag 不存在幂等成功。
-**错误**：`422 {"detail": "tag 必填"}`。
+**响应 data** `{"ok": true}`；(type,tag) 不存在幂等成功。
+**错误**：`422 {"detail": "tag 必填"}` 或 `422 {"detail": "type 必须为 tag|author"}`。
 
 ### 7.5 前端消费对照
 
 | 入口 | 位置 | 行为 |
 |---|---|---|
-| 详情页标签 | `app/jm/comic/[aid]/page.tsx` | 标签可点选中 → 「搜索」跳 `/jm/search?keyword&searchType=tag`、「收藏/已收藏」切换（乐观更新，失败回滚）；已收藏标签带 ★ 角标 |
-| 搜索页「我的标签」 | `app/jm/search/page.tsx` | 表单上方 chips：点击即按该标签搜索、× 就地取消收藏（失败静默）、「管理」进 /jm/tags；URL 参数初始化表单并自动首搜 |
-| 标签收藏页 | `app/jm/tags/page.tsx`（路由 `/jm/tags`） | chips 管理：点击跳搜索、× 取消收藏（失败回滚+toast）；空态引导到详情页收藏 |
+| 详情页标签/作者 | `app/jm/comic/[aid]/page.tsx` | 标签多选、作者 chip(紫色+👤)选中 → 「搜索」按最近点选项类型跳 `/jm/search?keyword&searchType=tag\|author`、「收藏/取消收藏」批量切换(乐观更新，失败精确回滚)；已收藏项带 ★ 角标 |
+| 搜索页「我的收藏」 | `app/jm/search/page.tsx` | 表单上方 chips(标签+作者两组,作者紫色+👤):点击即按对应 searchType 搜索、× 就地取消收藏（失败静默）、「管理」进 /jm/tags；URL 参数初始化表单并自动首搜 |
+| 标签收藏页 | `app/jm/tags/page.tsx`（路由 `/jm/tags`） | 按 type 分「标签/作者」两组 chips：点击跳对应类型搜索、× 取消收藏（失败回滚+toast）；空态引导到详情页收藏 |
 | 在线首页入口 | `app/jm/page.tsx` UserCard 快捷区 | 「标签收藏」入口（Tag 图标） |
 
 ### 7.6 测试

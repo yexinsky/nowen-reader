@@ -1,13 +1,14 @@
 package handler
 
-// JM 标签收藏端点(私有扩展,不属于 MOBILE_API.md 的 30 端点契约;文档见 §7)。
+// JM 标签/作者收藏端点(私有扩展,不属于 MOBILE_API.md 的 30 端点契约;文档见 §7)。
 //
-//	GET    /api/jm/tag-favorites        → 已收藏标签列表(createdAt 倒序)
-//	POST   /api/jm/tag-favorites        → 收藏标签(同 tag 幂等)
-//	DELETE /api/jm/tag-favorites?tag=   → 取消收藏(tag 不存在幂等成功)
+//	GET    /api/jm/tag-favorites              → 收藏列表(type=tag|author,createdAt 倒序)
+//	POST   /api/jm/tag-favorites              → 收藏(同 type+tag 幂等;body {tag,type?})
+//	DELETE /api/jm/tag-favorites?tag=&type=   → 取消收藏(type 缺省 tag;不存在幂等成功)
 //
-// 鉴权口径:仅组级 nowen 登录(AuthRequired),不要求 JM 登录——标签收藏是
-// 设备级本地数据(同阅读历史),而浏览/搜索本就匿名可用,收藏标签跟随;
+// type 用于区分「标签」(searchType=tag)与「作者」(searchType=author);同一名值可
+// 同时以两种类型收藏。鉴权口径:仅组级 nowen 登录(AuthRequired),不要求 JM 登录——
+// 标签/作者收藏是设备级本地数据(同阅读历史),而浏览/搜索本就匿名可用,收藏跟随;
 // 与 settings/下载同款,避免「未登录 JM 无法用快捷标签搜索」的引导死锁。
 
 import (
@@ -35,13 +36,18 @@ func registerJMTagFavoriteRoutes(g *gin.RouterGroup) {
 		jmOK(c, gin.H{"list": list, "total": len(list)})
 	})
 
-	// POST /tag-favorites — 收藏标签(幂等)
+	// POST /tag-favorites — 收藏标签/作者(幂等)
 	g.POST("/tag-favorites", func(c *gin.Context) {
 		var body struct {
-			Tag string `json:"tag"`
+			Tag  string `json:"tag"`
+			Type string `json:"type"` // 缺省 tag;枚举 tag|author
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": "tag 必填"})
+			return
+		}
+		if !jm.ValidTagFavoriteType(body.Type) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": "type 必须为 tag|author"})
 			return
 		}
 		tag := strings.TrimSpace(body.Tag)
@@ -53,22 +59,26 @@ func registerJMTagFavoriteRoutes(g *gin.RouterGroup) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": "tag 过长(上限 64 字符)"})
 			return
 		}
-		if err := jmService().Store.AddTagFavorite(tag); err != nil {
-			jmFailErr(c, err, "收藏标签失败")
+		if err := jmService().Store.AddTagFavorite(body.Type, tag); err != nil {
+			jmFailErr(c, err, "收藏失败")
 			return
 		}
 		jmOK(c, gin.H{"ok": true})
 	})
 
-	// DELETE /tag-favorites?tag= — 取消收藏(query 传参,规避中文路径参数编码问题)
+	// DELETE /tag-favorites?tag=&type= — 取消收藏(query 传参,规避中文路径参数编码问题)
 	g.DELETE("/tag-favorites", func(c *gin.Context) {
+		if !jm.ValidTagFavoriteType(c.Query("type")) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": "type 必须为 tag|author"})
+			return
+		}
 		tag := strings.TrimSpace(c.Query("tag"))
 		if tag == "" {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": "tag 必填"})
 			return
 		}
-		if err := jmService().Store.RemoveTagFavorite(tag); err != nil {
-			jmFailErr(c, err, "取消标签收藏失败")
+		if err := jmService().Store.RemoveTagFavorite(c.Query("type"), tag); err != nil {
+			jmFailErr(c, err, "取消收藏失败")
 			return
 		}
 		jmOK(c, gin.H{"ok": true})

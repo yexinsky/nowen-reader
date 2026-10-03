@@ -394,3 +394,31 @@ func TestBookListMapping(t *testing.T) {
 		t.Errorf("计数/时间缺失口径: %#v/%#v", second["likes"], second["updateAt"])
 	}
 }
+
+// ── albumAuthors:上游 author(string/数组)→ 归一作者名数组 ──
+
+func TestAlbumAuthors(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  any
+		want []string
+	}{
+		{"数组形态(1475046 实测)", []any{"N/A"}, []string{"N/A"}},
+		{"多作者去重", []any{" A ", "B", "A", "", " B "}, []string{"A", "B"}},
+		{"字符串形态", "某作者", []string{"某作者"}},
+		{"空白字符串", "   ", []string{}},
+		{"缺失", nil, []string{}},
+		{"数值作者名", float64(123), []string{"123"}},
+	}
+	for _, c := range cases {
+		got := albumAuthors(c.raw)
+		if len(got) != len(c.want) {
+			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+			}
+		}
+	}
+}

@@ -118,6 +118,8 @@ export interface JmComicDetail {
   aid: string;
   title: string;
   author: string;
+  /** 作者名数组(上游 author 归一;作者标签/作者搜索用;空数组 → 前端回退纯文本) */
+  authors: string[];
   coverUrl: string;
   description: string;
   tags: string[];
@@ -318,10 +320,13 @@ export const JM_ERROR_CODES = {
   INTERNAL: 4000,
 } as const;
 
-/* ── 标签收藏(私有扩展,非 MOBILE_API.md 契约) ── */
+/* ── 标签/作者收藏(私有扩展,非 MOBILE_API.md 契约) ── */
 
-/** 单条标签收藏(设备级共享,服务端 tag-favorites.json) */
+export type JmTagFavoriteType = "tag" | "author";
+
+/** 单条标签/作者收藏(设备级共享,服务端 tag-favorites.json;同 type+tag 幂等) */
 export interface JmTagFavorite {
+  type: JmTagFavoriteType;
   tag: string;
   /** 收藏时间,nowen 后端 nowStamp 格式(本地时区秒精度) */
   createdAt: string;
