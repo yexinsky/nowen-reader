@@ -12,7 +12,6 @@ import {
   updateComicRating,
   addComicTags,
   removeComicTag,
-  clearAllComicTags,
   deleteComicById,
   useCategories,
   addComicCategories,
@@ -152,6 +151,31 @@ export default function ComicDetailPage() {
   }, [comicId, comic?.tags]);
 
   const [newTag, setNewTag] = useState("");
+  const [draftTags, setDraftTags] = useState<string[]>([]);
+  const [tagSaving, setTagSaving] = useState(false);
+  const [showUnsavedTagsConfirm, setShowUnsavedTagsConfirm] = useState(false);
+
+  // 标签草稿:增删先落草稿,点「保存」才提交,「取消」还原
+  const savedTagNames = comic?.tags?.map((tag) => tag.name) ?? [];
+  const savedTagNamesKey = savedTagNames.join("\u0000");
+  const savedTagSet = new Set(savedTagNames);
+  const draftTagSet = new Set(draftTags);
+  const tagsDirty = draftTags.length !== savedTagNames.length || draftTags.some((n) => !savedTagSet.has(n));
+
+  useEffect(() => {
+    setDraftTags(savedTagNamesKey ? savedTagNamesKey.split("\u0000") : []);
+  }, [savedTagNamesKey]);
+
+  // 有未保存的标签更改时,拦截页面刷新/关闭
+  useEffect(() => {
+    if (!tagsDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [tagsDirty]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteFilesOption, setDeleteFilesOption] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -307,22 +331,16 @@ export default function ComicDetailPage() {
     [comicId, refetch, toast, t]
   );
 
-  const handleAddTag = useCallback(async () => {
-    if (!newTag.trim()) return;
-    await addComicTags(comicId, [newTag.trim()]);
+  const handleAddTag = useCallback(() => {
+    const name = newTag.trim();
+    if (!name) return;
+    setDraftTags((prev) => (prev.includes(name) ? prev : [...prev, name]));
     setNewTag("");
-    refetch();
-    emitTagsUpdated(comicId, "detail", { action: "add", tag: newTag.trim() });
-  }, [comicId, newTag, refetch]);
+  }, [newTag]);
 
-  const handleRemoveTag = useCallback(
-    async (tagName: string) => {
-      await removeComicTag(comicId, tagName);
-      refetch();
-      emitTagsUpdated(comicId, "detail", { action: "remove", tag: tagName });
-    },
-    [comicId, refetch]
-  );
+  const handleRemoveTag = useCallback((tagName: string) => {
+    setDraftTags((prev) => prev.filter((n) => n !== tagName));
+  }, []);
 
   const handleAddCategory = useCallback(async (slug: string) => {
     await addComicCategories(comicId, [slug]);
@@ -339,14 +357,49 @@ export default function ComicDetailPage() {
     emitCategoriesUpdated(comicId, "detail", { action: "remove", slug });
   }, [comicId, refetch, refetchCategories]);
 
-  // 一键清除所有标签
-  const handleClearAllTags = useCallback(async () => {
-    if (!comic?.tags || comic.tags.length === 0) return;
-    if (!window.confirm(t.comicDetail.clearAllTagsConfirm)) return;
-    await clearAllComicTags(comicId);
-    refetch();
-    emitTagsUpdated(comicId, "detail", { action: "clear_all" });
-  }, [comic?.tags, comicId, refetch, t.comicDetail.clearAllTagsConfirm]);
+  // 一键清除所有标签(草稿态,保存后生效,可「取消」还原)
+  const handleClearAllTags = useCallback(() => {
+    setDraftTags([]);
+  }, []);
+
+  // 放弃标签草稿修改
+  const handleCancelTagEdits = useCallback(() => {
+    setDraftTags(savedTagNamesKey ? savedTagNamesKey.split("\u0000") : []);
+    setNewTag("");
+  }, [savedTagNamesKey]);
+
+  // 批量保存标签草稿:对比已保存标签,分别提交新增/删除
+  const handleSaveTags = useCallback(async (): Promise<boolean> => {
+    const savedNames = comic?.tags?.map((tag) => tag.name) ?? [];
+    const savedSet = new Set(savedNames);
+    const draftSet = new Set(draftTags);
+    const added = draftTags.filter((n) => !savedSet.has(n));
+    const removed = savedNames.filter((n) => !draftSet.has(n));
+    if (added.length === 0 && removed.length === 0) return true;
+    setTagSaving(true);
+    try {
+      if (added.length > 0) await addComicTags(comicId, added);
+      if (removed.length > 0) await Promise.all(removed.map((n) => removeComicTag(comicId, n)));
+      if (removed.length > 0 && removed.length === savedNames.length) {
+        emitTagsUpdated(comicId, "detail", { action: "clear_all" });
+      } else {
+        for (const n of added) emitTagsUpdated(comicId, "detail", { action: "add", tag: n });
+        for (const n of removed) emitTagsUpdated(comicId, "detail", { action: "remove", tag: n });
+      }
+      toast.success(t.comicDetail.tagsSaved);
+      refetch();
+      return true;
+    } catch (e: unknown) {
+      if ((e as { status?: number })?.status === 403) {
+        toast.error(t.common.noPermissionAction);
+      } else {
+        toast.error(t.comicDetail.tagsSaveFailed);
+      }
+      return false;
+    } finally {
+      setTagSaving(false);
+    }
+  }, [comic, comicId, draftTags, refetch, toast, t]);
 
   // 一键清除所有分类
   const handleClearAllCategories = useCallback(async () => {
@@ -694,14 +747,16 @@ export default function ComicDetailPage() {
     }
   }, [aiSuggestLoading, comicId, locale]);
 
-  // 添加 AI 建议的标签
-  const handleAddAiTags = useCallback(async (tags: string[]) => {
+  // 添加 AI 建议的标签(进入草稿,保存后生效)
+  const handleAddAiTags = useCallback((tags: string[]) => {
     if (tags.length === 0) return;
-    await addComicTags(comicId, tags);
+    setDraftTags((prev) => {
+      const existing = new Set(prev);
+      return [...prev, ...tags.filter((n) => n && !existing.has(n))];
+    });
     setAiSuggestedTags([]);
     setAiSelectedTags(new Set());
-    refetch();
-  }, [comicId, refetch]);
+  }, []);
 
   // AI 封面分析
   const handleAiAnalyzeCover = useCallback(async () => {
@@ -883,7 +938,10 @@ export default function ComicDetailPage() {
       <div className="sticky top-0 z-50 border-b border-border/50 bg-background/70 backdrop-blur-xl">
         <div className="mx-auto flex h-14 sm:h-16 max-w-5xl items-center gap-3 sm:gap-4 px-3 sm:px-6">
           <button
-            onClick={() => router.back()}
+            onClick={() => {
+              if (tagsDirty) setShowUnsavedTagsConfirm(true);
+              else router.back();
+            }}
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-border/60 text-muted transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -1363,12 +1421,12 @@ export default function ComicDetailPage() {
               );
             })}
 
-            {/* Tags — 仅管理员可编辑 */}
+            {/* Tags — 仅管理员可编辑(草稿态,保存后生效) */}
             {canManage && (
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-xs font-medium uppercase tracking-wider text-muted">{t.comicDetail.tagsLabel}</h3>
-                {(comic.tags || []).length > 0 && (
+                {draftTags.length > 0 && (
                   <button
                     onClick={handleClearAllTags}
                     className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] text-muted transition-colors hover:bg-destructive/10 hover:text-destructive"
@@ -1380,13 +1438,13 @@ export default function ComicDetailPage() {
                 )}
               </div>
               <div className="mb-3 flex flex-wrap gap-2">
-                {(comic.tags || []).map((tag) => {
-                  const sourceInfo = tagsWithSource.find(t => t.name === tag.name);
+                {draftTags.map((tagName) => {
+                  const sourceInfo = tagsWithSource.find(t => t.name === tagName);
                   const isFromSeries = sourceInfo?.source === "series";
                   const isExcluded = sourceInfo?.source === "excluded";
                   return (
                     <span
-                      key={tag.name}
+                      key={tagName}
                       className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ${
                         isExcluded
                           ? "bg-muted/10 text-muted/50 line-through"
@@ -1396,7 +1454,7 @@ export default function ComicDetailPage() {
                       }`}
                     >
                       <Tag className="h-3 w-3" />
-                      {tag.name}
+                      {tagName}
                       {isFromSeries && (
                         <span className="ml-0.5 rounded bg-blue-500/20 px-1 py-0 text-[9px] text-blue-400/80">
                           系列
@@ -1408,7 +1466,7 @@ export default function ComicDetailPage() {
                         </span>
                       )}
                       <button
-                        onClick={() => handleRemoveTag(tag.name)}
+                        onClick={() => handleRemoveTag(tagName)}
                         className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-white/10"
                       >
                         <X className="h-3 w-3" />
@@ -1416,7 +1474,7 @@ export default function ComicDetailPage() {
                     </span>
                   );
                 })}
-                {(comic.tags || []).length === 0 && (
+                {draftTags.length === 0 && (
                   <span className="text-xs text-muted">{t.comicDetail.noTags}</span>
                 )}
               </div>
@@ -1448,6 +1506,30 @@ export default function ComicDetailPage() {
                   </button>
                 )}
               </div>
+
+              {/* 未保存的标签更改:保存 / 取消 */}
+              {tagsDirty && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
+                  <span className="text-xs text-amber-500">{t.comicDetail.unsavedTagsHint}</span>
+                  <div className="ml-auto flex gap-2">
+                    <button
+                      onClick={handleCancelTagEdits}
+                      disabled={tagSaving}
+                      className="rounded-md bg-card px-3 py-1.5 text-xs text-muted transition-colors hover:text-foreground disabled:opacity-50"
+                    >
+                      {t.comicDetail.cancelEdit}
+                    </button>
+                    <button
+                      onClick={() => handleSaveTags()}
+                      disabled={tagSaving}
+                      className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+                    >
+                      {tagSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                      {t.comicDetail.saveTags}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* AI 建议标签展示 */}
               {aiSuggestedTags.length > 0 && (
@@ -1999,6 +2081,46 @@ export default function ComicDetailPage() {
                 className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${deleteFilesOption ? "bg-red-600 hover:bg-red-700" : "bg-red-500 hover:bg-red-600"}`}
               >
                 {deleteFilesOption ? (t.comicDetail?.deleteWithFiles || "删除文件") : t.comicDetail.confirmDelete}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 未保存标签更改确认(返回上一页时) */}
+      {showUnsavedTagsConfirm && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/60 animate-backdrop-in" onClick={() => setShowUnsavedTagsConfirm(false)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-96 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-zinc-900 p-5 sm:p-6 shadow-2xl animate-modal-in">
+            <h3 className="text-lg font-semibold text-foreground">{t.comicDetail.unsavedTagsTitle}</h3>
+            <p className="mt-2 text-sm text-muted">{t.comicDetail.unsavedTagsMsg}</p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <button
+                onClick={() => setShowUnsavedTagsConfirm(false)}
+                className="rounded-lg bg-card px-4 py-2 text-sm text-foreground"
+              >
+                {t.comicDetail.keepEditing}
+              </button>
+              <button
+                onClick={() => {
+                  setShowUnsavedTagsConfirm(false);
+                  handleCancelTagEdits();
+                  router.back();
+                }}
+                className="rounded-lg border border-red-500/40 px-4 py-2 text-sm text-red-400 transition-colors hover:bg-red-500/10"
+              >
+                {t.comicDetail.discardChanges}
+              </button>
+              <button
+                onClick={async () => {
+                  setShowUnsavedTagsConfirm(false);
+                  const ok = await handleSaveTags();
+                  if (ok) router.back();
+                }}
+                disabled={tagSaving}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+              >
+                {t.comicDetail.saveAndBack}
               </button>
             </div>
           </div>

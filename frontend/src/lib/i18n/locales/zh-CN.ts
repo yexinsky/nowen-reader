@@ -193,6 +193,15 @@ const zhCN = {
     clearAllCategories: "清除所有分类",
     clearAllCategoriesConfirm: "确定要清除所有分类吗？",
     tagsCleared: "标签已清除",
+    saveTags: "保存",
+    tagsSaved: "标签已保存",
+    tagsSaveFailed: "标签保存失败",
+    unsavedTagsHint: "标签有未保存的更改",
+    unsavedTagsTitle: "未保存的标签更改",
+    unsavedTagsMsg: "返回上一页前，是否保存对标签的修改？",
+    saveAndBack: "保存并返回",
+    discardChanges: "放弃更改",
+    keepEditing: "继续编辑",
     categoriesCleared: "分类已清除",
     aiAnalyzeCover: "AI 分析封面",
     aiAnalyzeCoverLoading: "正在分析封面...",
@@ -1523,6 +1532,15 @@ export interface Translations {
     clearAllCategories: string;
     clearAllCategoriesConfirm: string;
     tagsCleared: string;
+    saveTags: string;
+    tagsSaved: string;
+    tagsSaveFailed: string;
+    unsavedTagsHint: string;
+    unsavedTagsTitle: string;
+    unsavedTagsMsg: string;
+    saveAndBack: string;
+    discardChanges: string;
+    keepEditing: string;
     categoriesCleared: string;
     aiAnalyzeCover: string;
     aiAnalyzeCoverLoading: string;
