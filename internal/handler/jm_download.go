@@ -175,11 +175,53 @@ const (
 	jmTagPollTimeout  = 90 * time.Second
 )
 
-// jmApplyTagsWhenComicExists 下载入库自动标签(MOBILE_API.md §6):轮询等待
-// 归档 zip 对应的 Comic 记录产生(PathToID 可确定性算出),然后挂 JM 标签。
-// 只记日志、绝不向任务注错——下载本体已成功,打标是附加增强。
+// jmAuthorPlaceholders 上游作者占位符(如 aid=1475046 实测 author=["N/A"])——
+// 占位符不作为入库标签、不回填作者字段。
+var jmAuthorPlaceholders = map[string]struct{}{
+	"n/a": {}, "na": {}, "-": {}, "未知": {}, "未知作者": {}, "default_author": {}, "unknown": {},
+}
+
+// jmSyncAuthorName 作者名归一:trim、剔占位符(不区分大小写);无效返回空串。
+func jmSyncAuthorName(author string) string {
+	a := strings.TrimSpace(author)
+	if a == "" {
+		return ""
+	}
+	if _, ok := jmAuthorPlaceholders[strings.ToLower(a)]; ok {
+		return ""
+	}
+	return a
+}
+
+// jmApplyTagsWhenComicExists 下载入库自动标签与作者同步(MOBILE_API.md §6):轮询等待
+// 归档 zip 对应的 Comic 记录产生(PathToID 可确定性算出),然后:
+// ① 挂 JM 标签(任务快照 tags,不存在自动创建);② 作者同步:有效作者名(非占位符)
+// 并入标签清单(书库详情页标签区可点可筛选),并把 Comic.author 元数据回填(仅当为空,
+// 不覆盖刮削/手动结果)。只记日志、绝不向任务注错——下载本体已成功,打标是附加增强。
 func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
-	if len(t.Tags) == 0 || t.LibraryID == "" || t.ZipName == "" {
+	if t.LibraryID == "" || t.ZipName == "" {
+		return
+	}
+	// 标签清单 = 快照 tags + 有效作者(去重;占位符作者如 "N/A" 不参与)
+	tags := make([]string, 0, len(t.Tags)+1)
+	seen := map[string]struct{}{}
+	for _, tag := range t.Tags {
+		if tag == "" {
+			continue
+		}
+		if _, dup := seen[tag]; dup {
+			continue
+		}
+		seen[tag] = struct{}{}
+		tags = append(tags, tag)
+	}
+	author := jmSyncAuthorName(t.Author)
+	if author != "" {
+		if _, dup := seen[author]; !dup {
+			tags = append(tags, author)
+		}
+	}
+	if len(tags) == 0 {
 		return
 	}
 	if !jmService().Settings().DownloadTags {
@@ -190,10 +232,19 @@ func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
 	for {
 		exists, err := store.ComicRelativePathExists(t.LibraryID, t.ZipName, "")
 		if err == nil && exists {
-			if err := store.AddTagsToComic(comicID, t.Tags); err != nil {
+			if err := store.AddTagsToComic(comicID, tags); err != nil {
 				log.Printf("[jm] 自动标签写入失败(comic=%s): %v", comicID, err)
 			} else {
-				log.Printf("[jm] 已自动添加 %d 个标签(comic=%s, aid=%s)", len(t.Tags), comicID, t.Aid)
+				log.Printf("[jm] 已自动添加 %d 个标签(comic=%s, aid=%s)", len(tags), comicID, t.Aid)
+			}
+			// 作者元数据回填:仅当书库记录的 author 为空,不覆盖刮削/手动结果
+			if author != "" {
+				if item, err := store.GetComicByID(comicID); err == nil && item != nil &&
+					strings.TrimSpace(item.Author) == "" {
+					if err := store.UpdateComicFields(comicID, map[string]interface{}{"author": author}); err != nil {
+						log.Printf("[jm] 作者字段回填失败(comic=%s): %v", comicID, err)
+					}
+				}
 			}
 			return
 		}
