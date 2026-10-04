@@ -21,7 +21,6 @@ func registerContentRoutes(api *gin.RouterGroup) {
 		tagAdmin.PUT("/color", tag.UpdateTagColor)
 		tagAdmin.PUT("/rename", tag.RenameTag)
 		tagAdmin.DELETE("", tag.DeleteTag)
-		tagAdmin.POST("/merge", tag.MergeTags)
 	}
 
 	// Tag Normalization M1（读取与现有 tags 一致需登录，写操作需管理员）

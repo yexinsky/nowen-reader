@@ -7,7 +7,6 @@ import {
   Layers,
   Pencil,
   Trash2,
-  Merge,
   Search,
   Check,
   X,
@@ -106,22 +105,6 @@ async function apiDeleteTag(name: string): Promise<{ ok: boolean; error?: string
   }
 }
 
-async function apiMergeTags(sourceNames: string[], targetName: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch(apiPath("/api/tags/merge"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceNames, targetName }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      return { ok: false, error: data.error || `HTTP ${res.status}` };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
-}
 
 async function apiUpdateTagColor(name: string, color: string): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -307,8 +290,6 @@ export default function TagManagerPage() {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
-  const [showMerge, setShowMerge] = useState(false);
-  const [mergeTarget, setMergeTarget] = useState("");
   const [colorPickerTag, setColorPickerTag] = useState<string | null>(null);
   const [batchColorPicker, setBatchColorPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -509,19 +490,7 @@ export default function TagManagerPage() {
     await loadData();
   };
 
-  const handleMergeTags = async () => {
-    if (!mergeTarget.trim() || selectedTags.size < 2) return;
-    const result = await apiMergeTags(Array.from(selectedTags), mergeTarget.trim());
-    if (result.ok) {
-      setSelectedTags(new Set());
-      setShowMerge(false);
-      setMergeTarget("");
-      showToast(t.tagManager?.merge || "合并成功", "success");
-      await loadData();
-    } else {
-      showToast(result.error || "操作失败", "error");
-    }
-  };
+
 
   const handleColorChange = async (name: string, color: string) => {
     const result = await apiUpdateTagColor(name, color);
@@ -1162,17 +1131,6 @@ export default function TagManagerPage() {
               {t.tagManager?.selected || "已选择"} {selectedTags.size} {t.tagManager?.tags || "个标签"}
             </span>
             <div className="flex flex-wrap items-center gap-1.5 ml-auto">
-              {/* Merge (requires 2+) */}
-              {selectedTags.size >= 2 && (
-                <button
-                  onClick={() => { setShowMerge(true); setMergeTarget(Array.from(selectedTags)[0]); }}
-                  disabled={batchLoading}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                >
-                  <Merge className="h-3.5 w-3.5" />
-                  {t.tagManager?.merge || "合并"}
-                </button>
-              )}
               {/* Batch color */}
               <div className="relative">
                 <button
@@ -1547,55 +1505,6 @@ export default function TagManagerPage() {
           </div>
         )}
       </PageContent>
-
-      {/* Merge Tags Modal */}
-      {showMerge && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/60 animate-backdrop-in" onClick={() => setShowMerge(false)} />
-          <div className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-96 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-card border border-border p-6 shadow-2xl animate-modal-in">
-            <h3 className="text-lg font-semibold text-foreground">
-              {t.tagManager?.mergeTitle || "合并标签"}
-            </h3>
-            <p className="mt-2 text-sm text-muted">
-              {t.tagManager?.mergeDesc || "将选中的标签合并为一个。所有漫画将使用目标标签名称。"}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-              {Array.from(selectedTags).map((name) => (
-                <span key={name} className="rounded-full bg-accent/15 px-2.5 py-0.5 text-xs font-medium text-accent">
-                  {name}
-                </span>
-              ))}
-            </div>
-            <div className="mt-4">
-              <label className="text-xs font-medium text-muted mb-1 block">
-                {t.tagManager?.mergeTargetLabel || "目标标签名称"}
-              </label>
-              <input
-                value={mergeTarget}
-                onChange={(e) => setMergeTarget(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleMergeTags(); }}
-                className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent/50"
-                autoFocus
-              />
-            </div>
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                onClick={() => setShowMerge(false)}
-                className="rounded-lg bg-card px-4 py-2 text-sm text-foreground"
-              >
-                {t.common?.cancel || "取消"}
-              </button>
-              <button
-                onClick={handleMergeTags}
-                disabled={!mergeTarget.trim()}
-                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {t.tagManager?.merge || "合并"}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Confirm Delete Dialog */}
       {confirmAction && (

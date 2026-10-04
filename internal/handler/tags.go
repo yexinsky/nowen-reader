@@ -80,27 +80,8 @@ func (h *TagHandler) DeleteTag(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// POST /api/tags/merge — Merge multiple tags into one
-func (h *TagHandler) MergeTags(c *gin.Context) {
-	var body struct {
-		SourceNames []string `json:"sourceNames"`
-		TargetName  string   `json:"targetName"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil || len(body.SourceNames) == 0 || body.TargetName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "sourceNames and targetName required"})
-		return
-	}
-
-	for _, src := range body.SourceNames {
-		if src != body.TargetName {
-			if err := store.RenameTag(src, body.TargetName); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to merge tags"})
-				return
-			}
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
-}
+// POST /api/tags/merge 已移除:标签合并统一走归一工作台的
+// POST /api/tags/normalization/apply(写别名 + 操作日志,可撤销)。
 
 // ============================================================
 // 标签归一管理 M1
