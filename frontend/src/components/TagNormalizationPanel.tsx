@@ -313,17 +313,31 @@ export function TagNormalizationPanel({
   };
 
   const handleManualMerge = async () => {
-    const source = tags.find((tg) => tg.name === sourceName.trim());
-    if (!source) {
-      if (n) toastError(n.manualSourceNotFound);
-      return;
-    }
+    const name = sourceName.trim();
     if (!manualTargetId) return;
-    if (source.id === manualTargetId) {
+    const source = tags.find((tg) => tg.name === name);
+    if (source && source.id === manualTargetId) {
       if (n) toastError(n.manualSameTag);
       return;
     }
     setManualBusy(true);
+    // 源标签尚不存在 → 保存为预设别名(主从映射):下次标签补全/下载写入该名时
+    // 由写入口别名解析自动归并到目标标签
+    if (!source) {
+      const r = await normRequest<{ ok: boolean }>(
+        "/api/tags/aliases",
+        postJson({ alias: name, tagId: manualTargetId })
+      );
+      setManualBusy(false);
+      if (!r.ok) {
+        toastError(r.error);
+        return;
+      }
+      if (n) toastSuccess(n.presetAliasSaved);
+      setSourceName("");
+      await loadAliases();
+      return;
+    }
     const r = await normRequest<{ ok: boolean; comicCount: number }>(
       "/api/tags/normalization/apply",
       postJson({ targetTagId: manualTargetId, sourceTagIds: [source.id] })

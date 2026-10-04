@@ -1374,13 +1374,14 @@ const en: Translations = {
       clustersEmpty: "No candidate clusters",
       comicsUnit: "comics",
       // Manual merge
-      manualDesc: "Merge one tag into another, for tags whose automatic normalization key differs but meanings match (synonyms, alternative translations).",
+      manualDesc: "Merge one tag into another (synonyms, alternative translations). If the source tag does not exist yet, it is saved as a preset alias: future writes (backfill/download) resolve to the target automatically.",
       sourceTagLabel: "Source tag",
       sourceTagPlaceholder: "Type or pick a source tag...",
       targetTagLabel: "Target tag",
       targetTagPlaceholder: "Select a target tag...",
       applyManual: "Merge",
       manualSourceNotFound: "Source tag not found, please pick one from the list",
+      presetAliasSaved: "Source tag does not exist yet; saved as a preset alias. Future writes (backfill/download) will resolve to the target tag automatically",
       manualSameTag: "Source and target tags must be different",
       // Recent operations
       operationsEmpty: "No operations yet",

@@ -1371,13 +1371,14 @@ autoDetect: "智能合集",
       clustersEmpty: "没有待处理的候选簇",
       comicsUnit: "本",
       // 手动归并
-      manualDesc: "将一个标签并入另一个标签，适用于自动归一键不同但含义相同的标签（如同义词、不同译名）。",
+      manualDesc: "将一个标签并入另一个标签（如同义词、不同译名）；源标签尚不存在时可预设主从：下次标签补全/下载写入该名时自动归并到目标标签。",
       sourceTagLabel: "源标签",
       sourceTagPlaceholder: "输入或选择源标签...",
       targetTagLabel: "目标标签",
       targetTagPlaceholder: "选择目标标签...",
       applyManual: "归并",
       manualSourceNotFound: "未找到该源标签，请从列表中选择",
+      presetAliasSaved: "源标签尚不存在，已保存为预设别名；下次标签补全/下载写入该名时将自动归并到目标标签",
       manualSameTag: "源标签与目标标签不能相同",
       // 最近操作
       operationsEmpty: "暂无操作记录",
@@ -2698,6 +2699,7 @@ export interface Translations {
       targetTagPlaceholder: string;
       applyManual: string;
       manualSourceNotFound: string;
+      presetAliasSaved: string;
       manualSameTag: string;
       operationsEmpty: string;
       kindMerge: string;
