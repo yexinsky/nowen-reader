@@ -864,11 +864,15 @@ go test ./internal/jm/ -run TestTagFavorite -v
 ## 8. 私有扩展：标签补全（`/api/jm/backfill`，仅内置 Go 服务实现）
 
 用 JM 在线搜索给书库中**无任何标签**的旧书补标签（原名「书库补标签」，入口在书库页工具条
-「标签补全」弹窗）。无状态三端点，匹配/应用节奏由前端选择流驱动：
+「标签补全」弹窗）。无状态端点组，匹配/应用节奏由前端选择流驱动：
 「无标签」本身即进度源（应用成功的漫画自动退出 candidates），重新打开弹窗天然断点续跑。
+`mode=title` 复用同一匹配管线做**漫画名补全**（`rename`，见 §8.5）：给标题坏掉的旧书
+（爬虫拼接名）用 JM 详情的 canonical 标题改名——改名是**替换**不是加法，防破坏优先。
 
 - 候选范围：`comic`/`mixed` 书库且当前用户有管理权；排除 `type='novel'` 行；
-  可用 `libraryIds` 与可管理书库求交集（书库弹窗按当前所选书库过滤）
+  可用 `libraryIds` 与可管理书库求交集（书库弹窗按当前所选书库过滤）；
+  `mode=tags`（缺省）只列无标签书，`mode=title` 列书库全部漫画（是否需要改名由标题
+  形态决定，与是否已打标无关，`filter` 控制是否只留内嵌车号的书）
 - 搜索词清洗（服务端）：HTML 实体 → 双变体标题按中央数字段拆分取干净一半（`A-<id>-B`）→
   数字 id 段（4~7 位；尾部与中部均覆盖）+ 重复段去重 → 噪声括号（汉化组/搬运/raw/翻译/DL版 等）→
   卷话后缀；**最后剥掉全部括号留标题主体**——实测上游 /search 对带括号的长关键词失效
@@ -876,19 +880,26 @@ go test ./internal/jm/ -run TestTagFavorite -v
 - **标题内嵌 aid**：爬虫落库的旧书标题大多内嵌 JM aid（如 `标题-262147-标题`），candidates
   随行下发 `embeddedAid`，match 传 `aid` 即走**车号直达**（数字关键词触发上游 redirect_aid
   单详情包装；要求结果恰好一条且 aid 一致，否则自动回退关键词搜索）
-- 上游纪律：`match`/`apply` 共用全局限速器，到上游的节奏恒 ≥1.2s/次
+- 上游纪律：`match`/`apply`/`rename` 共用全局限速器，到上游的节奏恒 ≥1.2s/次
 
 ### 8.1 端点总览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/jm/backfill/candidates` | 无标签漫画清单（附标题清洗出的默认搜索词） |
+| GET | `/api/jm/backfill/candidates` | 候选清单（`mode=tags` 无标签 / `mode=title` 全部；附标题清洗出的默认搜索词） |
 | POST | `/api/jm/backfill/match` | 关键词全站搜索第 1 页 + 标题打分（**不改库**） |
 | POST | `/api/jm/backfill/apply` | 按 `aid` 拉详情写标签/作者（与下载入库自动打标同口径） |
+| POST | `/api/jm/backfill/rename` | 按 `aid` 拉详情取 canonical 标题改名（漫画名补全，替换写入 + 防破坏合成） |
 
 ### 8.2 GET /api/jm/backfill/candidates — 候选清单
 
-**Query**：`libraryIds`（可选，逗号分隔书库 ID；与可管理书库求交集，缺省 = 全部可管理书库）
+**Query**：
+
+| 参数 | 取值 | 说明 |
+|---|---|---|
+| libraryIds | 可选，逗号分隔书库 ID | 与可管理书库求交集，缺省 = 全部可管理书库 |
+| mode | `tags`（缺省）/ `title` | `tags` = 现行为（无标签漫画，进度源）；`title` = 书库范围内全部漫画（漫画名补全），去掉「无标签」条件；非法值 → 422 |
+| filter | `aid`（缺省）/ `all` | **仅 title 模式有效**：`aid` 档只留标题内嵌车号（`embeddedAid` 非空）的书——车号直达最可靠；`all` 档不过滤；tags 模式忽略此参数；非法值 → 422 |
 
 **响应 data**
 
@@ -956,7 +967,37 @@ go test ./internal/jm/ -run TestTagFavorite -v
 
 **错误**：`403`（无该书库管理权限）、`404`（漫画不存在）、`422`（参数缺失）、上游错误按 §0 包装。
 
-### 8.5 前端消费对照
+### 8.5 POST /api/jm/backfill/rename — 漫画名补全改名
+
+复用 match 的匹配结论（`comicId` + `aid`），后端**自行拉详情**取 canonical 标题
+（不信任客户端透传），合成新名后**替换** `Comic.title`（`titleSortKey` 自动重算）。
+与 apply 的本质差异：改名是替换不是加法，防破坏优先——
+
+- **卷号标记合成**（`jmComposeRenamedTitle`）：提取本地标题**尾部**卷话标记
+  （`第100卷`/`第3話`/`第12话`/`第2季`/`vol.3`/`Vol 12`/`ch.5`/`Ch 7`/`chapter 9`，
+  锚定结尾；**裸数字尾缀不算**——`进击的巨人 04` 的 `04` 可能是标题本体）；
+  JM 原版标题普遍不带卷号，本地标记未包含在 JM 标题中时拼接保留（`JM标题 + " " + 标记`），
+  避免同一作品多卷改名后互相覆盖；JM 标题已含该标记则原样，不重复拼接
+- **写入口径**：`changed = newTitle != oldTitle`；changed 时写 `title` + 作者占位符过滤后
+  仅空缺回填 + `metadataSource` 仅空缺写 `"jm"`（与 apply 完全同口径）；**未变化什么都不写**
+- **审计日志**：每次实际写入追加一行 JSONL 到 `<DataDir>/jm/title-rename-log.jsonl`
+  （`{"comicId","oldTitle","newTitle","aid","at"(UTC RFC3339)}`，目录自动创建；
+  写失败只记服务端日志，不影响主流程）
+- **明确不做**：不改磁盘文件名、不动 Series/Group 名、不回填简介封面、rename 不顺带打标、无撤销 UI
+
+**请求体** `{ "comicId": "a1b2c3…", "aid": "262147", "newTitle": "可选" }`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| comicId / aid | string | 是 | 缺失或 aid 非数字 → 422 |
+| newTitle | string | 否 | 手动指定新名：trim 后非空、≤200 字符，否则 422；未传则按卷号合成规则自动生成 |
+
+**响应 data** `{ "oldTitle": "海贼王-125734", "newTitle": "海贼王 第100卷", "viaAid": true, "changed": true }`
+（`changed=false` 表示合成结果与现标题一致，未写库；`viaAid` 恒 true——标题始终来自 `aid` 详情。）
+
+**错误**：`403`（无该书库管理权限）、`404`（漫画不存在 / JM 详情无标题）、`422`（参数缺失/非法）、上游错误按 §0 包装。
+
+### 8.6 前端消费对照
 
 | 入口 | 位置 | 行为 |
 |---|---|---|
@@ -965,11 +1006,11 @@ go test ./internal/jm/ -run TestTagFavorite -v
 
 > 原 `/jm/backfill` 独立页与在线首页快捷入口已移除（入口收敛到书库页弹窗）。
 
-### 8.6 测试
+### 8.7 测试
 
 ```bash
-# 清洗/打分单测
-go test ./internal/handler -run "TestJmCleanSearchKeyword|TestJmScoreMatch" -v
-# 无标签候选查询单测
-go test ./internal/store -run TestGetUntaggedComics -v
+# 清洗/打分/卷号合成单测
+go test ./internal/handler -run "TestJmCleanSearchKeyword|TestJmScoreMatch|TestJmExtractVolumeMarker|TestJmComposeRenamedTitle" -v
+# 无标签/改名候选查询 + titleSortKey 重算单测
+go test ./internal/store -run "TestGetUntaggedComics|TestListTitleBackfillCandidates|TestTitleSortKeyUpdatedWithComicTitle" -v
 ```

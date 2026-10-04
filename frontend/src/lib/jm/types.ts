@@ -358,3 +358,13 @@ export interface JmBackfillMatch {
   /** 车号直达命中(aid 即权威匹配,与标题相似度无关) */
   viaAid: boolean;
 }
+
+/** rename 结果(改写书库标题;newTitle 为服务端权威口径,前端预填仅作预览) */
+export interface JmBackfillRenameResult {
+  oldTitle: string;
+  newTitle: string;
+  /** 是否车号直达命中 */
+  viaAid: boolean;
+  /** false = 新旧名称一致,未写入 */
+  changed: boolean;
+}

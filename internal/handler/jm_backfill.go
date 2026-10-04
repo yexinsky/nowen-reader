@@ -1,10 +1,11 @@
 package handler
 
-// JM 标签补全端点(私有扩展):用 JM 在线源给书库中无标签的旧书补标签。
+// JM 标签补全/漫画名补全端点(私有扩展):用 JM 在线源修补书库旧书。
 //
-//	GET  /api/jm/backfill/candidates → 无标签漫画清单(附清洗后的搜索词)
+//	GET  /api/jm/backfill/candidates → 候选清单(mode=tags 无标签 / mode=title 全部)
 //	POST /api/jm/backfill/match      → 关键词搜索 + 标题打分(不改库)
 //	POST /api/jm/backfill/apply      → 按 aid 拉详情,写入标签/作者
+//	POST /api/jm/backfill/rename     → 按 aid 拉详情,合成新名改名(漫画名补全,实现见 jm_backfill_rename.go)
 //
 // 设计:无状态三端点,匹配/应用节奏由前端选择流驱动;「无标签」本身即进度源
 // (补过标的漫画自动退出 candidates),重新打开弹窗天然断点续跑。
@@ -332,8 +333,11 @@ func jmBackfillThrottle() {
 /* ── 端点 ── */
 
 func registerJMBackfillRoutes(g *gin.RouterGroup) {
-	// GET /backfill/candidates — 无标签漫画清单(仅 comic/mixed 且有管理权的书库,
-	// 排除 novel 类型行;附标题清洗出的默认搜索词)
+	// GET /backfill/candidates — 候选清单(仅 comic/mixed 且有管理权的书库,
+	// 排除 novel 类型行;附标题清洗出的默认搜索词)。
+	// mode=tags(缺省,现行为)→ 无标签漫画;mode=title → 书库全部漫画(漫画名
+	// 补全:改名对象是标题坏掉的书,与是否已打标无关)。title 模式下 filter=aid
+	// (缺省)按标题内嵌车号过滤、filter=all 不过滤;tags 模式忽略 filter。
 	g.GET("/backfill/candidates", func(c *gin.Context) {
 		uid := getUserID(c)
 		libs, err := store.GetAllLibraries()
@@ -365,20 +369,49 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 			}
 			libraryIDs = append(libraryIDs, lib.ID)
 		}
-		comics, err := store.GetUntaggedComics(libraryIDs)
+
+		mode := strings.TrimSpace(c.Query("mode"))
+		if mode == "" {
+			mode = "tags"
+		}
+		if mode != "tags" && mode != "title" {
+			jmContent422(c, "mode 必须为 tags|title")
+			return
+		}
+		filter := strings.TrimSpace(c.Query("filter"))
+		if filter == "" {
+			filter = "aid"
+		}
+		if mode == "title" && filter != "aid" && filter != "all" {
+			jmContent422(c, "filter 必须为 aid|all")
+			return
+		}
+
+		var comics []store.UntaggedComic
+		if mode == "title" {
+			comics, err = store.ListTitleBackfillCandidates(libraryIDs)
+		} else {
+			comics, err = store.GetUntaggedComics(libraryIDs)
+		}
 		if err != nil {
-			jmFailErr(c, err, "查询无标签漫画失败")
+			jmFailErr(c, err, "查询候选漫画失败")
 			return
 		}
 		items := make([]gin.H, 0, len(comics))
 		for _, it := range comics {
+			embeddedAid := jmExtractEmbeddedAid(it.Title)
+			// title 模式 filter=aid 档:仅留标题内嵌车号的书(车号直达最可靠);
+			// filter=all 档全量;tags 模式忽略 filter
+			if mode == "title" && filter != "all" && embeddedAid == "" {
+				continue
+			}
 			items = append(items, gin.H{
 				"id":            it.ID,
 				"libraryId":     it.LibraryID,
 				"title":         it.Title,
 				"author":        it.Author,
 				"searchKeyword": jmCleanSearchKeyword(it.Title),
-				"embeddedAid":   jmExtractEmbeddedAid(it.Title),
+				"embeddedAid":   embeddedAid,
 			})
 		}
 		jmOK(c, gin.H{"list": items, "total": len(items)})
@@ -535,6 +568,10 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 		}
 		jmOK(c, gin.H{"applied": applied, "tags": tags, "author": author})
 	})
+
+	// POST /backfill/rename — 漫画名补全:按 aid 拉详情取 canonical 标题改名
+	// (替换写入,防破坏纪律与 JSONL 审计见 jm_backfill_rename.go)
+	g.POST("/backfill/rename", jmBackfillRename)
 }
 
 // jmMatchItem match 响应条目(按 score 倒序,最多 8 条)。

@@ -2,10 +2,12 @@
 
 /**
  * 标签补全弹窗(原「书库补标签」独立页改造,PRD docs/PRD_JM_SOURCE.md M13)
- * 接口:MOBILE_API.md §8 backfill 三端点(candidates / match / apply)
+ * 接口:MOBILE_API.md §8 backfill 三端点(candidates / match / apply)+ rename(补全名称)
  *
+ * - 双模式页签:「补标签」给无标签旧书匹配补标;「补全名称」用 JM 标题替换爬虫拼接的坏标题
  * - 入口在书库页(/books)工具条;候选按当前所选书库过滤(libraryIds,空 = 全部可管理书库)
- * - 选择流:逐本「匹配」→ JM 结果卡片(含封面)人工挑选 → 「应用」(后端按 aid 拉详情写标签)
+ * - 选择流:逐本「匹配」→ JM 结果卡片(含封面)人工挑选 → 「应用」
+ *   (补标签:后端按 aid 拉详情写标签;补全名称:调 rename 改写书库标题)
  * - 标签只能来自 JM 匹配结果,不支持自定义添加(无添加标签入口)
  * - 进度即状态:应用成功的漫画下次打开自动退出候选列表
  * - 未登录在线源时弹窗内提示,不做页面级跳转
@@ -27,7 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import { isJmApiError, jmBackfillApply, jmBackfillCandidates, jmBackfillMatch, resolveJmUrl } from "@/lib/jm/client";
+import { isJmApiError, jmBackfillApply, jmBackfillCandidates, jmBackfillMatch, jmBackfillRename, resolveJmUrl } from "@/lib/jm/client";
 import { useJmSession } from "@/lib/jm/session";
 import type { JmBackfillCandidate, JmBackfillMatch } from "@/lib/jm/types";
 
@@ -37,10 +39,13 @@ type RowStatus =
   | "matching"
   | "matched"
   | "noresult" // 上游搜索无结果
-  | "noTags" // 选中结果的上游详情没有标签
+  | "noTags" // 选中结果的上游详情没有标签(仅补标签模式)
   | "error"
   | "applied"
   | "skipped";
+
+/** 弹窗模式:补标签(默认)/ 补全名称 */
+type BackfillMode = "tags" | "title";
 
 interface BackfillRow {
   candidate: JmBackfillCandidate;
@@ -51,6 +56,12 @@ interface BackfillRow {
   expanded: boolean; // 备选列表展开
   applying: boolean;
   appliedTags: string[];
+  /** 补全名称:用户编辑后的新名;未编辑时预填值由 composeRenamedTitle 现算(跟随选中结果) */
+  newTitle: string;
+  /** 补全名称:用户是否编辑过新名(决定 rename 是否显式传 newTitle) */
+  newTitleEdited: boolean;
+  /** 补全名称:应用成功的改写结果(applied 终态展示 旧名→新名,以服务端响应为准) */
+  appliedRename: { oldTitle: string; newTitle: string } | null;
   errorMsg: string;
 }
 
@@ -70,6 +81,7 @@ export default function TagBackfillModal({
   onChanged?: () => void;
 }) {
   const { isLoggedIn } = useJmSession();
+  const [mode, setMode] = useState<BackfillMode>("tags");
 
   // Esc 关闭
   useEffect(() => {
@@ -98,10 +110,34 @@ export default function TagBackfillModal({
             <Tags className="h-4 w-4 text-accent" />
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-foreground">标签补全</h3>
+            <h3 className="text-sm font-semibold text-foreground">
+              {mode === "title" ? "补全名称" : "标签补全"}
+            </h3>
             <p className="mt-0.5 truncate text-xs text-muted">
-              用 JM 在线源给无标签的旧书匹配补标;挑选结果后写入,不支持自定义标签
+              {mode === "title"
+                ? "用 JM 标题替换爬虫拼接的坏标题;先预览旧名→新名,再确认写入"
+                : "用 JM 在线源给无标签的旧书匹配补标;挑选结果后写入,不支持自定义标签"}
             </p>
+          </div>
+          {/* 模式页签:切换时整窗重挂载,重拉候选并重置全部行状态 */}
+          <div className="flex shrink-0 rounded-lg border border-border p-0.5 text-xs">
+            {(
+              [
+                ["tags", "补标签"],
+                ["title", "补全名称"],
+              ] as [BackfillMode, string][]
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setMode(key)}
+                className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                  mode === key ? "bg-accent/10 text-accent" : "text-muted hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           <button
             type="button"
@@ -115,7 +151,7 @@ export default function TagBackfillModal({
 
         {/* 内容 */}
         {isLoggedIn ? (
-          <BackfillBody libraryIds={libraryIds} onChanged={onChanged} />
+          <BackfillBody key={mode} mode={mode} libraryIds={libraryIds} onChanged={onChanged} />
         ) : (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
             <BookOpen className="h-8 w-8 text-muted/50" />
@@ -135,9 +171,11 @@ export default function TagBackfillModal({
 }
 
 function BackfillBody({
+  mode,
   libraryIds,
   onChanged,
 }: {
+  mode: BackfillMode;
   libraryIds?: string[];
   onChanged?: () => void;
 }) {
@@ -169,7 +207,11 @@ function BackfillBody({
     setError(null);
     try {
       const ids = libKey ? libKey.split(",") : undefined;
-      const data = await jmBackfillCandidates(ids);
+      // 补标签请求保持原样(不带 mode);补全名称固定 mode=title&filter=aid(内嵌车号)
+      const data = await jmBackfillCandidates(
+        ids,
+        mode === "title" ? { mode: "title", filter: "aid" } : undefined,
+      );
       const next = data.list.map<BackfillRow>((c) => ({
         candidate: c,
         keyword: c.searchKeyword,
@@ -179,6 +221,9 @@ function BackfillBody({
         expanded: false,
         applying: false,
         appliedTags: [],
+        newTitle: "",
+        newTitleEdited: false,
+        appliedRename: null,
         errorMsg: "",
       }));
       rowsRef.current = next;
@@ -188,8 +233,8 @@ function BackfillBody({
     } finally {
       setLoading(false);
     }
-    // libKey 变化(切换书库标签)时重拉
-  }, [libKey]);
+    // libKey 变化(切换书库标签)时重拉;mode 变化经整窗重挂载后同样走这里
+  }, [libKey, mode]);
 
   useEffect(() => {
     load();
@@ -205,10 +250,13 @@ function BackfillBody({
         updateRow(id, { status: "invalid", matches: [], selectedAid: null });
         return;
       }
+      // 重开一轮匹配:清掉上次的新名编辑,预填随新一轮选中结果重新合成
       updateRow(id, (r) => ({
         status: "matching",
         errorMsg: "",
         expanded: false,
+        newTitle: "",
+        newTitleEdited: false,
       }));
       try {
         const data = await jmBackfillMatch({
@@ -257,6 +305,40 @@ function BackfillBody({
     [toast, updateRow, onChanged],
   );
 
+  /** 单行应用(补全名称):后端按 aid 拉详情改写书库标题;用户编辑过新名才传,未编辑由服务端合成 */
+  const renameRow = useCallback(
+    async (id: string, aid: string) => {
+      const row = rowsRef.current.find((r) => r.candidate.id === id);
+      if (!row || !aid) return;
+      const editedTitle = row.newTitle.trim();
+      const newTitle = row.newTitleEdited && editedTitle ? editedTitle : undefined;
+      updateRow(id, { applying: true, errorMsg: "" });
+      try {
+        const resp = await jmBackfillRename({
+          comicId: id,
+          aid,
+          ...(newTitle !== undefined ? { newTitle } : {}),
+        });
+        updateRow(id, {
+          applying: false,
+          status: "applied",
+          appliedRename: { oldTitle: resp.oldTitle, newTitle: resp.newTitle },
+        });
+        if (resp.changed) {
+          toast.success("标题已更新");
+          onChanged?.();
+        } else {
+          toast.warning("新旧名称一致,未改动");
+        }
+      } catch (err) {
+        const msg = isJmApiError(err) ? err.message : "改名失败,请稍后重试";
+        updateRow(id, { applying: false, status: "error", errorMsg: msg });
+        toast.error(msg);
+      }
+    },
+    [toast, updateRow, onChanged],
+  );
+
   const counts = useMemo(() => {
     const done = rows.filter((r) => r.status === "applied" || r.status === "skipped").length;
     return { total: rows.length, done, todo: rows.length - done };
@@ -273,7 +355,8 @@ function BackfillBody({
       {/* 工具条:进度 + 筛选 */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/40 px-5 py-2.5">
         <p className="text-xs text-muted">
-          未打标 {counts.total} 本 · 待处理 {counts.todo} · 已处理 {counts.done}
+          {mode === "title" ? "待改名" : "未打标"} {counts.total} 本 · 待处理 {counts.todo} · 已处理{" "}
+          {counts.done}
         </p>
         <div className="ml-auto flex rounded-lg border border-border p-0.5 text-xs">
           {(
@@ -320,9 +403,13 @@ function BackfillBody({
             <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-lg bg-emerald-500/10">
               <Check className="h-7 w-7 text-emerald-400" />
             </div>
-            <p className="text-sm text-foreground">该范围内没有无标签的漫画</p>
+            <p className="text-sm text-foreground">
+              {mode === "title" ? "该范围内没有内嵌车号的书" : "该范围内没有无标签的漫画"}
+            </p>
             <p className="mt-1.5 text-xs text-muted/70">
-              新下载的作品会按 JM 设置里的「下载自动打标」自动带上标签
+              {mode === "title"
+                ? "只有标题里内嵌了 JM 车号的下载记录才能补全名称"
+                : "新下载的作品会按 JM 设置里的「下载自动打标」自动带上标签"}
             </p>
           </div>
         ) : visibleRows.length === 0 ? (
@@ -333,14 +420,28 @@ function BackfillBody({
               <BackfillRowCard
                 key={row.candidate.id}
                 row={row}
+                mode={mode}
                 onKeyword={(v) => updateRow(row.candidate.id, { keyword: v })}
                 onMatch={() => matchRow(row.candidate.id, row.keyword)}
                 onApply={() => {
                   const chosen =
                     row.matches.find((m) => m.aid === row.selectedAid) ?? row.matches[0];
-                  if (chosen) applyRow(row.candidate.id, chosen.aid);
+                  if (chosen) {
+                    if (mode === "title") renameRow(row.candidate.id, chosen.aid);
+                    else applyRow(row.candidate.id, chosen.aid);
+                  }
                 }}
-                onSelect={(aid) => updateRow(row.candidate.id, { selectedAid: aid, expanded: false })}
+                onNewTitle={(v) =>
+                  updateRow(row.candidate.id, { newTitle: v, newTitleEdited: true })
+                }
+                onSelect={(aid) =>
+                  updateRow(
+                    row.candidate.id,
+                    mode === "title"
+                      ? { selectedAid: aid, expanded: false, newTitle: "", newTitleEdited: false }
+                      : { selectedAid: aid, expanded: false },
+                  )
+                }
                 onToggleExpand={() => updateRow(row.candidate.id, { expanded: !row.expanded })}
                 onSkip={() => updateRow(row.candidate.id, { status: "skipped", expanded: false })}
                 onReset={() =>
@@ -358,7 +459,9 @@ function BackfillBody({
       {/* 底部说明 */}
       <div className="shrink-0 border-t border-border/40 px-5 py-2.5">
         <p className="text-[11px] leading-relaxed text-muted/70">
-          应用后后端按所选作品的 aid 拉取详情写入标签,作者仅在书库记录为空时回填;写完的漫画下次打开不再出现。改词可修正搜索范围,Esc 或点击遮罩关闭。
+          {mode === "title"
+            ? "应用后后端按所选作品的 aid 拉取详情改写书库标题;未编辑新名时由服务端按卷标规则合成,写完的漫画下次打开不再出现。改词可修正搜索范围,Esc 或点击遮罩关闭。"
+            : "应用后后端按所选作品的 aid 拉取详情写入标签,作者仅在书库记录为空时回填;写完的漫画下次打开不再出现。改词可修正搜索范围,Esc 或点击遮罩关闭。"}
         </p>
       </div>
     </>
@@ -369,18 +472,22 @@ function BackfillBody({
 
 function BackfillRowCard({
   row,
+  mode,
   onKeyword,
   onMatch,
   onApply,
+  onNewTitle,
   onSelect,
   onToggleExpand,
   onSkip,
   onReset,
 }: {
   row: BackfillRow;
+  mode: BackfillMode;
   onKeyword: (v: string) => void;
   onMatch: () => void;
   onApply: () => void;
+  onNewTitle: (v: string) => void;
   onSelect: (aid: string) => void;
   onToggleExpand: () => void;
   onSkip: () => void;
@@ -451,7 +558,7 @@ function BackfillRowCard({
           {row.errorMsg || "操作失败,请重试"}
         </p>
       )}
-      {status === "applied" && (
+      {status === "applied" && mode === "tags" && (
         <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-emerald-400">
           <Check className="h-3.5 w-3.5 shrink-0" />
           已写入 {row.appliedTags.length} 个标签:
@@ -461,6 +568,16 @@ function BackfillRowCard({
             </span>
           ))}
           {row.appliedTags.length > 8 && <span>+{row.appliedTags.length - 8}</span>}
+        </p>
+      )}
+      {status === "applied" && mode === "title" && (
+        <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          <span className="break-all text-muted line-through">
+            {row.appliedRename?.oldTitle ?? candidate.title}
+          </span>
+          <span className="text-muted">→</span>
+          <span className="break-all text-emerald-300">{row.appliedRename?.newTitle ?? ""}</span>
         </p>
       )}
       {status === "skipped" && <p className="mt-2 text-xs text-muted">已跳过</p>}
@@ -488,7 +605,7 @@ function BackfillRowCard({
                     </span>
                   )}
                 </div>
-                {top.tags.length > 0 && (
+                {mode === "tags" && top.tags.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
                     {top.tags.slice(0, 8).map((t) => (
                       <span
@@ -503,6 +620,29 @@ function BackfillRowCard({
                     )}
                   </div>
                 )}
+                {mode === "title" && (
+                  <div className="mt-1.5 space-y-1">
+                    {/* 旧名:候选原始标题(爬虫拼接的坏标题) */}
+                    <p className="break-all text-xs leading-relaxed text-muted line-through" title={candidate.title}>
+                      {candidate.title || "无标题"}
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <span className="shrink-0 text-xs text-muted">→</span>
+                      <input
+                        value={
+                          row.newTitleEdited
+                            ? row.newTitle
+                            : composeRenamedTitle(candidate.title, top.title)
+                        }
+                        onChange={(e) => onNewTitle(e.target.value)}
+                        placeholder="新名称"
+                        spellCheck={false}
+                        disabled={row.applying}
+                        className="h-7 min-w-0 flex-1 rounded-lg border border-border bg-card px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-accent/60"
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
@@ -515,7 +655,7 @@ function BackfillRowCard({
                     ) : (
                       <Check className="h-3 w-3" />
                     )}
-                    应用此结果
+                    {mode === "title" ? "应用改名" : "应用此结果"}
                   </button>
                   {row.matches.length > 1 && (
                     <button
@@ -688,4 +828,21 @@ function ListSkeleton({ rows = 6 }: { rows?: number }) {
       ))}
     </div>
   );
+}
+
+/* ── 新名预填合成(仅前端预览;应用未编辑时由服务端按同一规则合成,口径权威) ── */
+
+/** 提取标题结尾的卷/话/章标记(第N卷 | Vol.N | Ch.N/Chapter N;裸数字尾缀不算) */
+function extractVolumeMarker(title: string): string {
+  const m = title.match(
+    /(第\s*\d+(?:\.\d+)?\s*[卷話话集章部季]|[Vv][Oo][Ll]\.?\s*\d+|[Cc][Hh](?:\.|apter)?\s*\d+)\s*$/,
+  );
+  return m ? m[1] : "";
+}
+
+/** 合成预填新名:旧名带卷标且 JM 标题未含时拼到尾部,否则直接用 JM 标题 */
+function composeRenamedTitle(original: string, jmTitle: string): string {
+  const marker = extractVolumeMarker(original);
+  if (!marker || jmTitle.includes(marker)) return jmTitle;
+  return `${jmTitle} ${marker}`;
 }

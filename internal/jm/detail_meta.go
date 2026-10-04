@@ -42,3 +42,10 @@ func ExtractDetailMeta(data any) (tags []string, author string) {
 	}
 	return normalizeJmTags(listOf(m["tags"])), fieldStr(m, "author")
 }
+
+// ExtractDetailTitle 从 #14 详情响应(mapAlbumDetail 映射结果)提取 canonical 标题
+// (mapAlbumDetail 将上游 name 映射为 "title" 字段)。供漫画名补全改名使用;
+// 响应缺失/形态异常返回空串,调用方按"上游无标题"处理。
+func ExtractDetailTitle(data any) string {
+	return fieldStr(dataMap(data), "title")
+}

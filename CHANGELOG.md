@@ -1,6 +1,14 @@
 # Changelog
 
 ## Unreleased
+### Added (feat/jm-title-backfill 漫画名补全)
+
+- 书库页「标签补全」弹窗新增「补全名称」模式页签:匹配侧零新逻辑(candidates/match 原样复用,车号直达/打分/限速全套),写入从标签换成标题——给爬虫拼接的坏标题书用 JM 详情 canonical 标题改名
+- 防呆核心「卷号保真」:改名前从原标题尾部提取卷话标记(第N卷/話/话/集/章/部/季、vol.N、ch.N;裸数字尾缀不提取——可能是标题本体),新名 = JM 标题 + 标记(JM 标题已含则不重复);无标记直接用 JM 标题。前端新名行内可编辑(旧名删除线→新名),编辑过才传 `newTitle`,未编辑由服务端合成
+- 端点:candidates 新增 `mode=tags|title` 与 `filter=aid|all`(title 模式去掉无标签条件,默认只取内嵌车号书);新增 `POST /api/jm/backfill/rename`(comicId/aid 必填、书库管理权 403、上游限速共用、后端自拉详情不信任客户端;`changed=false` 零写入;author/metadataSource 仅空缺回填)
+- 审计:每次实际改名追加一行 JSONL 到 `<DataDir>/jm/title-rename-log.jsonl`(写失败只记日志),改错有账可查可手工恢复,无撤销 UI
+- 明确不做:不改磁盘文件名、不动 Series/Group 名、不回填简介封面、rename 不顺带打标
+- 测试:卷号提取/合成、ExtractDetailTitle、title 模式候选(含已打标书/排 novel)、titleSortKey 随改名重算
 ### Added (feat/tag-alias-preset 归一工作台支持预设主从别名)
 
 - 手动归并在源标签尚不存在时不再报错,改为保存为「预设别名」(`POST /api/tags/aliases`,该端点本就不要求源标签存在,此前 UI 未暴露):下次标签补全/下载/合集打标写入该名时,由写入口别名解析自动归并到目标标签;预设别名可在「别名与忽略」页签随时删除

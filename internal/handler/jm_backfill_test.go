@@ -1,6 +1,10 @@
 package handler
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nowen-reader/nowen-reader/internal/jm"
+)
 
 // 旧库命名两主形态(用户实测):"漫画名-数字id" 与 纯漫画名,
 // 外加卷话后缀/汉化组括号等噪声。纯数字(车号)保留,短数字结尾不误杀。
@@ -110,5 +114,80 @@ func TestJmExtractEmbeddedAid(t *testing.T) {
 		if got := jmExtractEmbeddedAid(tc.in); got != tc.want {
 			t.Errorf("jmExtractEmbeddedAid(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// 尾部卷话标记提取(漫画名补全改名防呆):只认锚定结尾的卷话形态,
+// 裸数字尾缀不提取(可能是标题本体),标题中部不算。
+func TestJmExtractVolumeMarker(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"海贼王 第100卷", "第100卷"},
+		{"海贼王 vol.3", "vol.3"},
+		{"海贼王 Vol 12", "Vol 12"},
+		{"进击的巨人 ch.5", "ch.5"},
+		{"进击的巨人 Ch 7", "Ch 7"},
+		{"进击的巨人 chapter 9", "chapter 9"},
+		{"東京喰種 第3話", "第3話"},
+		{"東京喰種 第12话", "第12话"},
+		{"某作品 第2季", "第2季"},
+		{"某作品 第12.5话", "第12.5话"},   // 小数话数
+		{"海贼王 第100卷  ", "第100卷"},    // 尾随空白
+		{"进击的巨人 04", ""},             // 裸数字尾缀:可能是标题本体,不提取
+		{"海贼王", ""},                   // 无标记
+		{"", ""},                       // 空标题
+		{"第3话的爱情", ""},              // 标题本体含"第3话"但不在尾部
+		{"某作品 第3话 前篇", ""},         // 标记后还有别的内容,不算尾部
+	}
+	for _, tc := range cases {
+		if got := jmExtractVolumeMarker(tc.in); got != tc.want {
+			t.Errorf("jmExtractVolumeMarker(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// 新名合成:无标记直接用 JM 原题;有标记且 JM 题未含则拼接保住多卷区分度;
+// JM 题已含标记不重复;裸数字尾缀不参与拼接。
+func TestJmComposeRenamedTitle(t *testing.T) {
+	cases := []struct {
+		name    string
+		orig    string
+		jmTitle string
+		want    string
+	}{
+		{"无标记→JM原题", "海贼王-125734", "ONE PIECE", "ONE PIECE"},
+		{"有标记且JM不含→拼接", "海贼王 第100卷", "海贼王", "海贼王 第100卷"},
+		{"JM已含标记→不重复", "海贼王 第100卷", "海贼王 第100卷", "海贼王 第100卷"},
+		{"vol标记拼接", "海贼王 vol.3", "海贼王", "海贼王 vol.3"},
+		{"裸数字→不拼接", "进击的巨人 04", "进击的巨人", "进击的巨人"},
+		{"话数拼接", "東京喰種 第12话", "東京喰種:re", "東京喰種:re 第12话"},
+	}
+	for _, tc := range cases {
+		if got := jmComposeRenamedTitle(tc.orig, tc.jmTitle); got != tc.want {
+			t.Errorf("%s: jmComposeRenamedTitle(%q, %q) = %q, want %q",
+				tc.name, tc.orig, tc.jmTitle, got, tc.want)
+		}
+	}
+}
+
+// 详情标题提取(mapAlbumDetail 映射结果取 "title"):异常响应返回空串。
+func TestJmExtractDetailTitle(t *testing.T) {
+	// mapped 详情:mapAlbumDetail 把上游 name 映射为 "title"
+	if got := jm.ExtractDetailTitle(map[string]any{
+		"aid": "125734", "title": "呑噬万物", "author": "N/A",
+	}); got != "呑噬万物" {
+		t.Errorf("ExtractDetailTitle(mapped) = %q, want %q", got, "呑噬万物")
+	}
+	if got := jm.ExtractDetailTitle(map[string]any{"aid": "125734"}); got != "" {
+		t.Errorf("ExtractDetailTitle(no title) = %q, want empty", got)
+	}
+	// 异常形态:非 map / nil → 空串
+	if got := jm.ExtractDetailTitle("not a map"); got != "" {
+		t.Errorf("ExtractDetailTitle(string) = %q, want empty", got)
+	}
+	if got := jm.ExtractDetailTitle(nil); got != "" {
+		t.Errorf("ExtractDetailTitle(nil) = %q, want empty", got)
 	}
 }

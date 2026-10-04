@@ -41,6 +41,7 @@ import {
   type JmTagFavoriteType,
   type JmBackfillCandidate,
   type JmBackfillMatch,
+  type JmBackfillRenameResult,
 } from "./types";
 
 const DEFAULT_TIMEOUT = 30000;
@@ -380,13 +381,18 @@ export function jmRemoveTagFavorite(tag: string, type: JmTagFavoriteType): Promi
 
 /* ── 标签补全(私有扩展,/api/jm/backfill;入口在书库页弹窗) ── */
 
-/** 无标签漫画清单(仅 comic/mixed 且有管理权的书库;排除小说行;libraryIds 缺省 = 全部) */
+/** 补全候选清单(仅 comic/mixed 且有管理权的书库;排除小说行;libraryIds 缺省 = 全部)
+ *  缺省 = 补标签候选(无标签);mode="title" + filter="aid" = 补全名称候选(标题内嵌车号的书) */
 export function jmBackfillCandidates(
   libraryIds?: string[],
+  opts?: { mode?: "tags" | "title"; filter?: "aid" | "all" },
 ): Promise<{ list: JmBackfillCandidate[]; total: number }> {
+  const query: Record<string, string> = {};
+  if (libraryIds && libraryIds.length > 0) query.libraryIds = libraryIds.join(",");
+  if (opts?.mode) query.mode = opts.mode;
+  if (opts?.filter) query.filter = opts.filter;
   return jmRequest<{ list: JmBackfillCandidate[]; total: number }>("/api/backfill/candidates", {
-    query:
-      libraryIds && libraryIds.length > 0 ? { libraryIds: libraryIds.join(",") } : undefined,
+    query: Object.keys(query).length > 0 ? query : undefined,
   });
 }
 
@@ -409,6 +415,18 @@ export function jmBackfillApply(body: {
   aid: string;
 }): Promise<{ applied: number; tags: string[]; author: string }> {
   return jmRequest<{ applied: number; tags: string[]; author: string }>("/api/backfill/apply", {
+    method: "POST",
+    body,
+  });
+}
+
+/** 按 aid 拉详情改写书库标题(补全名称;未传 newTitle 时由服务端按卷标规则合成,口径权威) */
+export function jmBackfillRename(body: {
+  comicId: string;
+  aid: string;
+  newTitle?: string;
+}): Promise<JmBackfillRenameResult> {
+  return jmRequest<JmBackfillRenameResult>("/api/backfill/rename", {
     method: "POST",
     body,
   });
