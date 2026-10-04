@@ -1,0 +1,50 @@
+# ============================================================
+# NowenReader Online - JM 在线漫画版（GHCR 镜像，独立实例）
+#
+# 与旧实例 nowen-reader(6680) 并行运行：
+#   - 数据库/缓存独立（/vol1/docker/nowen-reader-online/）
+#   - 共享同一漫画库目录，JM 下载入库后两个实例都能扫描到
+#   - 端口 6681
+#
+# 使用方法:
+#   docker compose pull && docker compose up -d
+# ============================================================
+
+services:
+  nowen-reader-online:
+    image: ghcr.io/yexinsky/nowen-reader:latest
+    container_name: nowen-reader-online
+    restart: unless-stopped
+    ports:
+      - "6681:3000"
+    volumes:
+      # 数据库与配置（独立于旧实例，勿与 nowen-reader 共用）
+      - /vol1/docker/nowen-reader-online/data:/data
+      # 缩略图与页面缓存（含 JM 会话数据 /app/.cache/jm/）
+      - /vol1/docker/nowen-reader-online/cache:/app/.cache
+      # 漫画主目录（与旧实例共享）
+      - /vol2/1000/share2/images/本子:/app/comics
+      # 额外漫画目录（与旧实例共享，需在 Web 设置→额外漫画目录中添加 /mnt/comics2）
+      - /vol2/1000/share2/images/pixiv:/mnt/comics2
+    environment:
+      - GIN_MODE=release
+      - DATABASE_URL=/data/nowen-reader.db
+      - COMICS_DIR=/app/comics
+      - NOVELS_DIR=/app/novels
+      - DATA_DIR=/app/.cache
+      - PORT=3000
+      - TZ=Asia/Shanghai
+      # 文件权限映射（NAS 实际用户 yexinsky 的 UID/GID）
+      - PUID=1000
+      - PGID=1001
+      - UMASK=0002
+      # ── JM 在线漫画源（可选）──
+      # 上游代理（Live 模式必需时配置；也可在 Web 设置页修改，持久化于 /app/.cache/jm/）
+      # - JM_UPSTREAM_PROXY=http://172.17.0.1:10809
+      # 上游域名池覆盖（兜底用，逗号分隔）
+      # - JM_API_DOMAINS=www.cdnhjk.net,www.cdngwc.cc
+      # - JM_IMAGE_DOMAINS=cdn-msp.jmapiproxy1.cc,cdn-msp.jmapiproxy2.cc
+    deploy:
+      resources:
+        limits:
+          memory: 512M
