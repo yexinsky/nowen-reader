@@ -88,6 +88,11 @@ const en: Translations = {
     translate: "Translate",
     translating: "Translating...",
     empty: "No tags yet. Add tags in the Tags & Categories management page.",
+    searchPlaceholder: "Search tags…",
+    clearSearch: "Clear search",
+    selectedGroup: "Selected",
+    noMatch: "No matching tags",
+    moreHidden: "For smoothness only the first {n} tags are shown; type to narrow down",
   },
 
 

@@ -1,8 +1,8 @@
 ﻿"use client";
 
 import { apiPath } from "@/lib/base-path";
-import { useRef, useState, useEffect, useCallback } from "react";
-import { Tag, ChevronLeft, ChevronRight, Languages } from "lucide-react";
+import { useState, useCallback, useMemo, useRef } from "react";
+import { Tag, ChevronRight, Languages, Search, X } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
 
 interface TagFilterProps {
@@ -39,6 +39,13 @@ const tagActiveColorMap: Record<string, string> = {
   Mystery: "bg-rose-500/20 border-rose-500/50 text-rose-600 dark:text-rose-300",
 };
 
+// 超过该数量的标签默认折叠，展开后进入大面板模式
+const FOLD_THRESHOLD = 10;
+// 标签总数超过该值时，面板内显示搜索框
+const SEARCH_THRESHOLD = 20;
+// 面板内最多渲染的标签数（其余靠搜索过滤，避免几千个按钮卡顿）
+const RENDER_LIMIT = 600;
+
 export default function TagFilter({
   allTags,
   selectedTags,
@@ -48,45 +55,19 @@ export default function TagFilter({
 }: TagFilterProps) {
   const t = useTranslation();
   const { locale } = useLocale();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
   const [translating, setTranslating] = useState(false);
-  const [showAll, setShowAll] = useState(false);
-
-  const MAX_VISIBLE_TAGS = 50;
-  const visibleTags = showAll ? allTags : allTags.slice(0, MAX_VISIBLE_TAGS);
-  const hasMore = allTags.length > MAX_VISIBLE_TAGS;
-
-  // 超过 10 个标签时默认折叠（仅首次渲染时）
   const [collapsed, setCollapsed] = useState(true);
-  const FOLD_THRESHOLD = 10;
+  const [query, setQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const checkScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    setCanScrollLeft(el.scrollLeft > 0);
-    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
-  }, []);
+  const expanded = !collapsed;
+  const showSearch = allTags.length > SEARCH_THRESHOLD;
 
-  useEffect(() => {
-    checkScroll();
-    const el = scrollRef.current;
-    if (!el) return;
-    el.addEventListener("scroll", checkScroll, { passive: true });
-    const ro = new ResizeObserver(checkScroll);
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", checkScroll);
-      ro.disconnect();
-    };
-  }, [checkScroll, allTags]);
-
-  const scroll = (dir: "left" | "right") => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const amount = el.clientWidth * 0.6;
-    el.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      if (!prev) setQuery("");
+      return !prev;
+    });
   };
 
   const handleTranslate = useCallback(async () => {
@@ -116,9 +97,35 @@ export default function TagFilter({
     }
   }, [translating, locale, onClearAll, onTagsTranslated]);
 
+  // 面板内的标签列表：已选置顶 + 按关键词过滤 + 渲染数量上限
+  const { restTags, hiddenCount } = useMemo(() => {
+    const selectedSet = new Set(selectedTags);
+    const q = query.trim().toLowerCase();
+    const matches = (tag: string) => !q || tag.toLowerCase().includes(q);
+    const rest = allTags.filter((tag) => !selectedSet.has(tag) && matches(tag));
+    return {
+      restTags: rest.slice(0, RENDER_LIMIT),
+      hiddenCount: Math.max(0, rest.length - RENDER_LIMIT),
+    };
+  }, [allTags, selectedTags, query]);
+
+  const renderTagButton = (tag: string, active: boolean) => (
+    <button
+      key={tag}
+      onClick={() => onTagToggle(tag)}
+      className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+        active
+          ? tagActiveColorMap[tag] || "bg-accent/15 border-accent/40 text-accent"
+          : tagColorMap[tag] || "border-border/60 text-muted hover:text-foreground hover:border-border"
+      }`}
+    >
+      {active ? `${tag} ✓` : tag}
+    </button>
+  );
+
   return (
     <div className="relative">
-      <div className={`flex gap-2 ${showAll ? "items-start" : "items-center"}`}>
+      <div className={`flex gap-2 flex-col sm:flex-row ${expanded ? "sm:items-start" : "sm:items-center"}`}>
         {/* Label + Translate + Fold Toggle */}
         <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
           <div className="flex items-center gap-1.5 text-muted">
@@ -139,7 +146,7 @@ export default function TagFilter({
           {/* 折叠/展开切换 */}
           {allTags.length > FOLD_THRESHOLD && (
             <button
-              onClick={() => setCollapsed(!collapsed)}
+              onClick={toggleCollapsed}
               className="flex h-6 items-center gap-0.5 rounded-md border border-border/40 bg-card/50 px-1.5 text-[10px] font-medium text-muted transition-all hover:text-foreground hover:border-border"
             >
               <ChevronRight className={`h-3 w-3 transition-transform ${collapsed ? "" : "rotate-90"}`} />
@@ -174,68 +181,11 @@ export default function TagFilter({
               </span>
             )}
           </div>
-        ) : showAll ? (
-          /* Expanded: wrap mode with max height */
-          <div className="flex flex-wrap items-center gap-2 max-h-48 overflow-y-auto pr-1" style={{ scrollbarWidth: "thin" }}>
-            {/* All Tag */}
-            <button
-              onClick={onClearAll}
-              className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
-                selectedTags.length === 0
-                  ? "bg-accent/20 border-accent/50 text-accent"
-                  : "border-border/60 text-muted hover:text-foreground hover:border-border"
-              }`}
-            >
-              {t.common.all}
-            </button>
-
-            {visibleTags.map((tag) => {
-              const isActive = selectedTags.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => onTagToggle(tag)}
-                  className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 whitespace-nowrap ${
-                    isActive
-                      ? tagActiveColorMap[tag] || "bg-accent/15 border-accent/40 text-accent"
-                      : tagColorMap[tag] || "border-border/60 text-muted hover:text-foreground hover:border-border"
-                  }`}
-                >
-                  {tag}
-                </button>
-              );
-            })}
-
-            {/* Collapse button */}
-            {hasMore && (
-              <button
-                onClick={() => setShowAll(false)}
-                className="shrink-0 rounded-lg border border-dashed border-border/60 px-3 py-1.5 text-xs font-medium text-muted transition-all hover:text-foreground hover:border-border"
-              >
-                {`← ${t.common?.collapse || "收起"}`}
-              </button>
-            )}
-          </div>
         ) : (
-          /* Collapsed: single-line scroll mode */
-          <div className="relative flex-1 min-w-0">
-            {/* Left arrow */}
-            {canScrollLeft && (
-              <button
-                onClick={() => scroll("left")}
-                className="absolute left-0 top-1/2 -translate-y-1/2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 border border-border/60 text-muted hover:text-foreground shadow-sm backdrop-blur-sm transition-all"
-                aria-label="Scroll left"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-            )}
-
-            <div
-              ref={scrollRef}
-              className="flex items-center gap-2 overflow-x-auto scrollbar-hide scroll-smooth"
-              style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-            >
-              {/* All Tag */}
+          /* 展开面板：多行换行 + 搜索过滤 + 大高度滚动区，适配大量标签 */
+          <div className="flex-1 min-w-0 rounded-xl border border-border/40 bg-card/30 p-2.5 space-y-2">
+            {/* 面板头部：全部 / 搜索 / （移动端收起） */}
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={onClearAll}
                 className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
@@ -247,53 +197,70 @@ export default function TagFilter({
                 {t.common.all}
               </button>
 
-              {visibleTags.map((tag) => {
-                const isActive = selectedTags.includes(tag);
-                return (
-                  <button
-                    key={tag}
-                    onClick={() => onTagToggle(tag)}
-                    className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 whitespace-nowrap ${
-                      isActive
-                        ? tagActiveColorMap[tag] || "bg-accent/15 border-accent/40 text-accent"
-                        : tagColorMap[tag] || "border-border/60 text-muted hover:text-foreground"
-                    }`}
-                  >
-                    {tag}
-                  </button>
-                );
-              })}
+              {showSearch && (
+                <div className="relative min-w-0 flex-1 sm:max-w-xs">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted/60" />
+                  <input
+                    ref={searchInputRef}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={t.tagFilter.searchPlaceholder}
+                    className="h-8 w-full rounded-lg border border-border/40 bg-background/60 pl-8 pr-7 text-xs text-foreground placeholder:text-muted/50 outline-none transition-colors focus:border-accent/50"
+                  />
+                  {query && (
+                    <button
+                      onClick={() => { setQuery(""); searchInputRef.current?.focus(); }}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full text-muted/60 hover:text-foreground"
+                      aria-label={t.tagFilter.clearSearch}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              )}
 
-              {/* Show more button */}
-              {hasMore && (
+              {selectedTags.length > 0 && (
+                <span className="shrink-0 text-[11px] text-muted">
+                  {t.tagFilter.selectedGroup} {selectedTags.length}
+                </span>
+              )}
+
+              {/* 小屏时头部收起按钮（左侧切换按钮在小屏可能换行到看不见的位置） */}
+              {allTags.length > FOLD_THRESHOLD && (
                 <button
-                  onClick={() => setShowAll(true)}
-                  className="shrink-0 rounded-lg border border-dashed border-border/60 px-3 py-1.5 text-xs font-medium text-muted transition-all hover:text-foreground hover:border-border"
+                  onClick={toggleCollapsed}
+                  className="ml-auto flex h-6 items-center gap-0.5 rounded-md border border-border/40 bg-card/50 px-1.5 text-[10px] font-medium text-muted transition-all hover:text-foreground hover:border-border sm:hidden"
                 >
-                  {`+${allTags.length - MAX_VISIBLE_TAGS} ${t.common?.more || "更多"}`}
+                  <ChevronRight className="h-3 w-3 rotate-90" />
+                  <span>{t.common.collapse}</span>
                 </button>
               )}
             </div>
 
-            {/* Right arrow */}
-            {canScrollRight && (
-              <button
-                onClick={() => scroll("right")}
-                className="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 border border-border/60 text-muted hover:text-foreground shadow-sm backdrop-blur-sm transition-all"
-                aria-label="Scroll right"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+            {/* 已选标签置顶区：始终展示全部选中标签，滚动/搜索时也不会丢失当前筛选 */}
+            {selectedTags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-accent/5 border border-accent/20 p-1.5">
+                {selectedTags.map((tag) => renderTagButton(tag, true))}
+              </div>
             )}
 
-            {/* Left fade */}
-            {canScrollLeft && (
-              <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-background to-transparent z-[5]" />
-            )}
-            {/* Right fade */}
-            {canScrollRight && (
-              <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-background to-transparent z-[5]" />
-            )}
+            {/* 标签滚动区 */}
+            <div
+              className="flex flex-wrap items-start gap-2 overflow-y-auto overscroll-contain p-0.5 max-h-[min(55vh,440px)]"
+              style={{ scrollbarWidth: "thin" }}
+            >
+              {restTags.length === 0 && selectedTags.length === 0 ? (
+                <span className="py-3 text-xs text-muted/60 italic">{t.tagFilter.noMatch}</span>
+              ) : (
+                restTags.map((tag) => renderTagButton(tag, false))
+              )}
+
+              {hiddenCount > 0 && (
+                <span className="w-full py-1 text-center text-[11px] text-muted/60">
+                  {t.tagFilter.moreHidden.replace("{n}", String(restTags.length))}
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -84,6 +84,11 @@ const zhCN = {
     translate: "翻译标签",
     translating: "翻译中...",
     empty: "暂无标签，可在标签与分类管理页面添加",
+    searchPlaceholder: "搜索标签…",
+    clearSearch: "清空搜索",
+    selectedGroup: "已选",
+    noMatch: "没有匹配的标签",
+    moreHidden: "为保持流畅，仅显示前 {n} 个标签，请用搜索缩小范围",
   },
 
 
@@ -1434,6 +1439,11 @@ export interface Translations {
     translate: string;
     translating: string;
     empty: string;
+    searchPlaceholder: string;
+    clearSearch: string;
+    selectedGroup: string;
+    noMatch: string;
+    moreHidden: string;
   };
   categoryFilter: {
     label: string;
