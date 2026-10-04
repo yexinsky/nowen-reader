@@ -1308,6 +1308,8 @@ const en: Translations = {
     title: "Tag & Category Manager",
     tagsTab: "Tags",
     authorTag: "Author",
+    contentTags: "Content Tags",
+    authorTagsSection: "Author Tags",
     categoriesTab: "Categories",
     searchPlaceholder: "Search tags or categories...",
     noTags: "No tags yet",

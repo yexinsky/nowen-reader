@@ -1305,6 +1305,8 @@ autoDetect: "智能合集",
     title: "标签与分类管理",
     tagsTab: "标签",
     authorTag: "作者",
+    contentTags: "内容标签",
+    authorTagsSection: "作者标签",
     categoriesTab: "分类",
     searchPlaceholder: "搜索标签或分类...",
     noTags: "暂无标签",
@@ -2659,6 +2661,8 @@ export interface Translations {
     title: string;
     tagsTab: string;
     authorTag: string;
+    contentTags: string;
+    authorTagsSection: string;
     categoriesTab: string;
     searchPlaceholder: string;
     noTags: string;

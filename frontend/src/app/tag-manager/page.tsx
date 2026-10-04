@@ -11,6 +11,7 @@ import {
   Check,
   X,
   AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ArrowUpDown,
@@ -312,6 +313,8 @@ export default function TagManagerPage() {
   const [batchColorPicker, setBatchColorPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [showNewTagInput, setShowNewTagInput] = useState(false);
+  // 作者标签分区（默认折叠，独立于内容标签区）
+  const [authorTagsOpen, setAuthorTagsOpen] = useState(false);
 
   // Category editing & selection states
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -393,11 +396,21 @@ export default function TagManagerPage() {
     });
   }, [sortField, sortDir]);
 
+  // 内容标签（kind='tag'）：主列表、情景分配、归一工作台共用；作者标签独立分区
+  const contentTags = useMemo(() => tags.filter((tg) => tg.kind === "tag"), [tags]);
+  const authorTagsAll = useMemo(() => tags.filter((tg) => tg.kind === "author"), [tags]);
+
   const filteredTags = useMemo(() => {
     const q = search.toLowerCase();
-    const filtered = tags.filter((item) => item.name.toLowerCase().includes(q));
+    const filtered = contentTags.filter((item) => item.name.toLowerCase().includes(q));
     return sortItems(filtered);
-  }, [tags, search, sortItems]);
+  }, [contentTags, search, sortItems]);
+
+  const filteredAuthorTags = useMemo(() => {
+    const q = search.toLowerCase();
+    const filtered = authorTagsAll.filter((item) => item.name.toLowerCase().includes(q));
+    return sortItems(filtered);
+  }, [authorTagsAll, search, sortItems]);
 
   const filteredCategories = useMemo(() => {
     const q = search.toLowerCase();
@@ -966,7 +979,7 @@ export default function TagManagerPage() {
   const handleAssignByName = async (scenarioId: number, rawName: string) => {
     const name = rawName.trim();
     if (!name) return;
-    const tag = tags.find((tg) => tg.name === name);
+    const tag = contentTags.find((tg) => tg.name === name);
     if (!tag) {
       showToast(scenarioSc?.tagNotFound || "未找到该标签", "error");
       return;
@@ -1100,7 +1113,7 @@ export default function TagManagerPage() {
 
         {/* 标签归一工作台 */}
         {activeTab === "tags" && isAdmin && (
-          <TagNormalizationPanel tags={tags} onDataChanged={loadData} />
+          <TagNormalizationPanel tags={contentTags} onDataChanged={loadData} />
         )}
 
         {/* AI 智能生成面板 */}
@@ -1505,6 +1518,16 @@ export default function TagManagerPage() {
         ) : activeTab === "tags" ? (
           /* ── Tags List ── */
           <div>
+            {/* 内容标签分区头部 */}
+            <div className="mb-2 flex items-center gap-2 px-1">
+              <span className="text-sm font-semibold text-foreground">
+                {t.tagManager?.contentTags || "内容标签"}
+              </span>
+              <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted">
+                {contentTags.length}
+              </span>
+            </div>
+
             {/* Select all header */}
             {isAdmin && filteredTags.length > 0 && (
               <div className="flex items-center gap-3 mb-2 px-1">
@@ -1648,6 +1671,113 @@ export default function TagManagerPage() {
               onPageSizeChange={(s) => { setPageSize(s); setTagPage(1); setCatPage(1); }}
               t={t}
             />
+
+            {/* 作者标签分区（默认折叠） */}
+            <div className="mt-4 rounded-xl border border-border/40 bg-card/50 p-3">
+              <button
+                onClick={() => setAuthorTagsOpen((o) => !o)}
+                className="flex w-full select-none items-center gap-2 text-left transition-colors hover:text-accent"
+              >
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted transition-transform ${authorTagsOpen ? "rotate-180" : ""}`}
+                />
+                <span className="text-sm font-semibold text-foreground">
+                  {t.tagManager?.authorTagsSection || "作者标签"}
+                </span>
+                <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted">
+                  {authorTagsAll.length}
+                </span>
+              </button>
+              {authorTagsOpen && (
+                <div className="mt-3 space-y-2">
+                  {filteredAuthorTags.length === 0 ? (
+                    <div className="py-6 text-center text-sm text-muted">
+                      {search ? (t.tagManager?.noSearchResults || "未找到匹配的标签") : (t.tagManager?.noTags || "暂无标签")}
+                    </div>
+                  ) : (
+                    filteredAuthorTags.map((tag) => (
+                      <div
+                        key={tag.id}
+                        className="group flex items-center gap-3 rounded-xl border border-border/40 bg-card p-3 transition-colors hover:border-border/60"
+                      >
+                        {/* Color dot */}
+                        <div className="relative shrink-0">
+                          <button
+                            onClick={() => isAdmin && setColorPickerTag(colorPickerTag === tag.name ? null : tag.name)}
+                            className="h-4 w-4 rounded-full border border-border/50 transition-transform hover:scale-125"
+                            style={{ backgroundColor: resolveTagColor(tag.color) }}
+                          />
+                          {/* Color picker popover */}
+                          {colorPickerTag === tag.name && isAdmin && (
+                            <div className="absolute left-0 top-7 z-10 flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-2 shadow-xl w-[180px]">
+                              {COLOR_PRESETS.map((c) => (
+                                <button
+                                  key={c}
+                                  onClick={() => handleColorChange(tag.name, c)}
+                                  className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110"
+                                  style={{
+                                    backgroundColor: c,
+                                    borderColor: resolveTagColor(tag.color) === c ? "white" : "transparent",
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Name (editable) */}
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          {editingTag === tag.name ? (
+                            <input
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.currentTarget.blur();
+                                }
+                                if (e.key === "Escape") {
+                                  setEditingTag(null);
+                                }
+                              }}
+                              onBlur={() => handleRenameTag(tag.name)}
+                              className="min-w-0 flex-1 rounded-lg bg-background px-2 py-1 text-sm text-foreground outline-none ring-1 ring-accent/50"
+                              autoFocus
+                            />
+                          ) : (
+                            <span className="min-w-0 truncate text-sm font-medium text-foreground">{tag.name}</span>
+                          )}
+                        </div>
+
+                        {/* Count badge */}
+                        <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-xs text-muted">
+                          {tag.count}
+                        </span>
+
+                        {/* Actions — always visible on mobile, hover on desktop */}
+                        {isAdmin && (
+                          <div className="flex shrink-0 items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => { setEditingTag(tag.name); setEditValue(tag.name); }}
+                              className="rounded-lg p-1.5 text-muted hover:bg-card-hover hover:text-foreground"
+                              title={t.tagManager?.rename || "重命名"}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTag(tag.name)}
+                              className="rounded-lg p-1.5 text-muted hover:bg-red-500/10 hover:text-red-400"
+                              title={t.common?.delete || "删除"}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         ) : activeTab === "categories" ? (
           /* ── Categories List ── */
@@ -1811,7 +1941,7 @@ export default function TagManagerPage() {
           <div>
             {/* 全部标签 datalist：供各卡片「添加标签」输入联想 */}
             <datalist id="scenario-all-tags">
-              {tags.map((tg) => (
+              {contentTags.map((tg) => (
                 <option key={tg.id} value={tg.name} />
               ))}
             </datalist>
