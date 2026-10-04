@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+### Fixed (feat/jm-backfill-tags 补标签实测修复)
+
+- 修复自动匹配死循环:无结果行被反复重搜(同一词重搜必然复现 noresult)。现判定保证每行「处理一次即进入终态或耗尽重试额度」——noresult 同词不自动重试、error 最多自动重试 1 次、改词后视为新任务;另修「应用全部高置信」在 apply 持续失败/上游详情无标签时的同类重放(noTags 终态)
+- 修复 id 夹在中间的标题清洗失效:如 `[作者]永世流転-224406-[作者]永世流転`(尾部正则锚定 `$` 无法命中)导致整串拿去搜索无结果。现按连字符切段剔除 4~7 位纯数字 id 段(尾部/中部均覆盖)并对重复段去重(`A-A` → `A`);剥 id 后只剩纯数字则回退,合法连字符名(test-comic)不动
+
 ### Added (feat/jm-backfill-tags 书库补标签)
 
 - 书库补标签(私有扩展,MOBILE_API.md §8):用 JM 在线搜索给书库中无标签的旧书批量补标。无状态三端点 `GET /api/jm/backfill/candidates`(无标签清单 + 标题清洗出的默认搜索词)、`POST match`(全站搜索 + 标题打分,不改库;归一全等 1.0/包含 0.75/CJK bigram Jaccard×0.7,作者一致 +0.1,分 high/medium/low 三档)、`POST apply`(后端自行拉详情写标签,不信任客户端透传;与下载入库打标同口径:标签上限 30、作者占位符过滤、author/metadataSource 仅空缺回填)

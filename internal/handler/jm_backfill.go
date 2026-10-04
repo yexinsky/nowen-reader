@@ -30,8 +30,8 @@ import (
 /* ── 搜索词清洗 ── */
 
 // 旧书标题混有"漫画名-数字id"、卷话后缀、汉化组括号等噪声。清洗顺序:
-// 噪声括号 → 卷话后缀 → 尾部 id,循环至稳定(如"海贼王-125734 第01卷"需两轮)。
-// 尾部 id 取 4~7 位:JM aid 实际 5~7 位,4 位起步会误杀"一拳超人 2"类短数字,
+// 数字 id 段/重复段 → 噪声括号 → 卷话后缀 → 尾部 id,循环至稳定。
+// id 取 4~7 位:JM aid 实际 5~7 位,4 位起步会误杀"一拳超人 2"类短数字,
 // 故定 4~7;全角数字不处理(实测旧库不存在该形态)。
 var (
 	reBackfillNoiseBracket = regexp.MustCompile(
@@ -41,15 +41,66 @@ var (
 	reBackfillTailID = regexp.MustCompile(`[-–—_]\s*[0-9]{4,7}$`)
 )
 
+// jmIsDigits 纯 ASCII 数字判断(数字 id 段只可能是 ASCII,与 len 语义一致)。
+func jmIsDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// jmStripIDSegments 处理连字符分隔形态的数字 id 与重复段(实测旧库存在
+// "[作者]标题-224406-[作者]标题"——id 夹在中间、前后重复,尾部正则无法命中):
+// 按 -/–/—/_ 切段,剔除 4~7 位纯数字段、去掉重复段,"A-A" → "A"。
+// 保守边界:单段(含纯数字车号标题)、无任何剔除、或剔完为空(全数字段)时原样返回,
+// 不动 "test-comic" 这类合法连字符名。
+func jmStripIDSegments(s string) string {
+	segs := strings.FieldsFunc(s, func(r rune) bool {
+		return r == '-' || r == '–' || r == '—' || r == '_'
+	})
+	if len(segs) <= 1 {
+		return s
+	}
+	out := make([]string, 0, len(segs))
+	seen := make(map[string]struct{}, len(segs))
+	changed := false
+	for _, seg := range segs {
+		seg = strings.TrimSpace(seg)
+		if n := len(seg); n >= 4 && n <= 7 && jmIsDigits(seg) {
+			changed = true
+			continue
+		}
+		if _, dup := seen[seg]; dup {
+			changed = true
+			continue
+		}
+		seen[seg] = struct{}{}
+		out = append(out, seg)
+	}
+	if !changed || len(out) == 0 {
+		return s
+	}
+	return strings.Join(out, "-")
+}
+
 // jmCleanSearchKeyword 书库标题 → JM 搜索词。
 // 纯数字标题(车号)原样保留:上游 /search 对纯数字走 redirect_aid 单详情直达。
 func jmCleanSearchKeyword(title string) string {
 	s := strings.TrimSpace(title)
 	for i := 0; i < 4; i++ {
 		before := s
+		s = jmStripIDSegments(s)
 		s = strings.TrimSpace(reBackfillNoiseBracket.ReplaceAllString(s, " "))
 		s = strings.TrimSpace(reBackfillVolumeSuffix.ReplaceAllString(s, ""))
-		s = strings.TrimSpace(reBackfillTailID.ReplaceAllString(s, ""))
+		if t := strings.TrimSpace(reBackfillTailID.ReplaceAllString(s, "")); t != s && !jmIsDigits(t) {
+			// 尾部 id 剥离后不得只剩纯数字(避免把 "1234-5678" 削成伪车号 "1234")
+			s = t
+		}
 		if s == before {
 			break
 		}

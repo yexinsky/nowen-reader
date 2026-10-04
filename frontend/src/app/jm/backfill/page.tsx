@@ -38,6 +38,7 @@ type RowStatus =
   | "matching"
   | "matched"
   | "noresult" // 上游搜索无结果
+  | "noTags" // 选中结果的上游详情没有标签
   | "error"
   | "applied"
   | "skipped";
@@ -52,6 +53,8 @@ interface BackfillRow {
   applying: boolean;
   appliedTags: string[];
   errorMsg: string;
+  attempts: number; // 实际搜索次数(error 自动重试上限用)
+  searchedKeyword: string; // 最近一次实际搜索的词;改词后允许自动重搜
 }
 
 type Filter = "todo" | "done" | "all";
@@ -116,6 +119,8 @@ function BackfillContent() {
         applying: false,
         appliedTags: [],
         errorMsg: "",
+        attempts: 0,
+        searchedKeyword: "",
       }));
       rowsRef.current = next;
       setRows(next);
@@ -140,7 +145,13 @@ function BackfillContent() {
         updateRow(id, { status: "invalid", matches: [], selectedAid: null });
         return;
       }
-      updateRow(id, { status: "matching", errorMsg: "", expanded: false });
+      updateRow(id, (r) => ({
+        status: "matching",
+        errorMsg: "",
+        expanded: false,
+        attempts: r.attempts + 1,
+        searchedKeyword: kw,
+      }));
       try {
         const data = await jmBackfillMatch({
           keyword: kw,
@@ -174,12 +185,14 @@ function BackfillContent() {
           updateRow(id, { applying: false, status: "applied", appliedTags: resp.tags });
           toast.success(`已写入 ${resp.applied} 个标签`);
         } else {
-          updateRow(id, { applying: false });
+          // noTags 终态:必须退出 matched,否则「应用全部高置信」会对它无限重放
+          updateRow(id, { applying: false, status: "noTags" });
           toast.warning("该作品上游详情没有标签,未写入;可换备选或改词重搜");
         }
       } catch (err) {
         const msg = isJmApiError(err) ? err.message : "应用失败,请稍后重试";
-        updateRow(id, { applying: false, errorMsg: msg });
+        // 转入 error 终态退出 matched,避免批量应用对持续失败行无限重放
+        updateRow(id, { applying: false, status: "error", errorMsg: msg });
         toast.error(msg);
       }
     },
@@ -195,10 +208,30 @@ function BackfillContent() {
     if (busy) return;
     setBusy("match");
     stopRef.current = false;
+    // 待处理行的判定必须保证「每处理一次,行要么进入终态、要么耗尽重试额度」,
+    // 否则同一行会被反复选中(实测 bug:noresult 行重搜必然复现 noresult,死循环):
+    // - idle:从未搜过;
+    // - 改过词的行(kw ≠ searchedKeyword):新词未搜过,视为新任务;
+    // - error:同一词最多自动重试 1 次(attempts < 2);
+    // - noresult 同词不自动重试(需人工改词/跳过)。
     const pending = () =>
-      rowsRef.current.filter(
-        (r) => r.status === "idle" || r.status === "error" || r.status === "noresult",
-      );
+      rowsRef.current.filter((r) => {
+        const kw = r.keyword.trim();
+        if (kw === "") return false;
+        if (
+          r.status === "applied" ||
+          r.status === "skipped" ||
+          r.status === "noTags" ||
+          r.status === "matching"
+        ) {
+          return false;
+        }
+        return (
+          r.status === "idle" ||
+          kw !== r.searchedKeyword ||
+          (r.status === "error" && r.attempts < 2)
+        );
+      });
     while (!stopRef.current) {
       const row = pending()[0];
       if (!row) break;
@@ -341,7 +374,7 @@ function BackfillContent() {
               key={row.candidate.id}
               row={row}
               locked={anyBusy}
-              onKeyword={(v) => updateRow(row.candidate.id, { keyword: v })}
+              onKeyword={(v) => updateRow(row.candidate.id, { keyword: v, attempts: 0 })}
               onMatch={() => matchRow(row.candidate.id, row.keyword)}
               onApply={() => {
                 const chosen =
@@ -441,6 +474,12 @@ function BackfillRowCard({
           上游无匹配结果,试试修改搜索词
         </p>
       )}
+      {status === "noTags" && (
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-400">
+          <CircleAlert className="h-3.5 w-3.5" />
+          选中结果的上游详情没有标签,未写入;可换备选、改词重搜或跳过
+        </p>
+      )}
       {status === "error" && (
         <p className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
           <CircleAlert className="h-3.5 w-3.5" />
@@ -463,8 +502,8 @@ function BackfillRowCard({
         <p className="mt-2 text-xs text-muted">已跳过,不会参与批量操作</p>
       )}
 
-      {/* 匹配结果(选中项 + 备选) */}
-      {top && status === "matched" && (
+      {/* 匹配结果(选中项 + 备选);noTags 也保留卡片,便于换备选 */}
+      {top && (status === "matched" || status === "noTags") && (
         <div className="mt-2.5">
           <div className="rounded-lg border border-border/70 bg-background/60 p-2.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -604,7 +643,8 @@ function RowActionButton({
       </span>
     );
   }
-  const isRetry = row.status === "error" || row.status === "noresult";
+  const isRetry =
+    row.status === "error" || row.status === "noresult" || row.status === "noTags";
   return (
     <button
       type="button"
