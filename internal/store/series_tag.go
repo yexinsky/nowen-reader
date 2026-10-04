@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"strings"
 )
 
@@ -29,6 +28,29 @@ func GetSeriesTags(seriesID string) ([]Tag, error) {
 }
 
 func SetSeriesTags(seriesID string, tagNames []string) error {
+	// 事务外先经归一解析/创建标签（别名/同 normKey 命中既有标签）
+	ix, err := loadTagNormIndex()
+	if err != nil {
+		return err
+	}
+	var tagIDs []int
+	seen := make(map[int]bool)
+	for _, rawName := range tagNames {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			continue
+		}
+		tagID, err := ix.resolve(name)
+		if err != nil {
+			return err
+		}
+		if seen[tagID] {
+			continue
+		}
+		seen[tagID] = true
+		tagIDs = append(tagIDs, tagID)
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -37,26 +59,7 @@ func SetSeriesTags(seriesID string, tagNames []string) error {
 	if _, err := tx.Exec(`DELETE FROM "ComicSeriesTag" WHERE "seriesId" = ?`, seriesID); err != nil {
 		return err
 	}
-	for _, rawName := range tagNames {
-		name := strings.TrimSpace(rawName)
-		if name == "" {
-			continue
-		}
-		var tagID int
-		err := tx.QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = ?`, name).Scan(&tagID)
-		if err == sql.ErrNoRows {
-			result, createErr := tx.Exec(`INSERT INTO "Tag" ("name", "color") VALUES (?, '')`, name)
-			if createErr != nil {
-				return createErr
-			}
-			id, idErr := result.LastInsertId()
-			if idErr != nil {
-				return idErr
-			}
-			tagID = int(id)
-		} else if err != nil {
-			return err
-		}
+	for _, tagID := range tagIDs {
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO "ComicSeriesTag" ("seriesId", "tagId") VALUES (?, ?)`, seriesID, tagID); err != nil {
 			return err
 		}

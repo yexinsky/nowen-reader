@@ -31,6 +31,11 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 	if err := store.InitDB(dbPath); err != nil {
 		t.Fatalf("InitDB failed: %v", err)
 	}
+	// 生产环境启动即跑迁移（cmd/server/main.go）；测试库同样执行，
+	// 保证 v9+ 的表（如标签归一的 TagAlias/TagOperation/TagNormIgnore）存在。
+	if err := store.RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations failed: %v", err)
+	}
 	t.Cleanup(func() {
 		store.CloseDB()
 		os.Remove(dbPath)

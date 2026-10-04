@@ -1355,6 +1355,50 @@ autoDetect: "智能合集",
     categoriesUnit: "个分类",
     confirmBatchDeleteCats: "确认删除选中的",
     batchDeleteCatsWarning: "此操作将从所有漫画中移除这些分类。",
+    // 标签归一（M1）
+    normalization: {
+      title: "标签归一",
+      subtitle: "识别同一标签的不同写法（繁简、译名、同义词），可合并或忽略候选簇，支持撤销",
+      clustersTab: "候选簇",
+      manualTab: "手动归并",
+      operationsTab: "最近操作",
+      aliasesTab: "别名与忽略",
+      // 候选簇
+      totalComicsLabel: "涉及书目",
+      mergeTargetLabel: "归并目标",
+      merge: "合并",
+      ignore: "忽略",
+      clustersEmpty: "没有待处理的候选簇",
+      comicsUnit: "本",
+      // 手动归并
+      manualDesc: "将一个标签并入另一个标签，适用于自动归一键不同但含义相同的标签（如同义词、不同译名）。",
+      sourceTagLabel: "源标签",
+      sourceTagPlaceholder: "输入或选择源标签...",
+      targetTagLabel: "目标标签",
+      targetTagPlaceholder: "选择目标标签...",
+      applyManual: "归并",
+      manualSourceNotFound: "未找到该源标签，请从列表中选择",
+      manualSameTag: "源标签与目标标签不能相同",
+      // 最近操作
+      operationsEmpty: "暂无操作记录",
+      kindMerge: "合并",
+      undoneBadge: "已撤销",
+      undo: "撤销",
+      // 别名与忽略
+      aliasesEmpty: "暂无别名记录",
+      deleteAlias: "删除别名",
+      ignoresTitle: "忽略列表",
+      ignoresEmpty: "暂无忽略项",
+      unignore: "取消忽略",
+      // 反馈
+      mergeSuccess: "合并完成，处理",
+      manualMergeSuccess: "归并完成，处理",
+      ignoreSuccess: "已忽略该候选簇",
+      undoSuccess: "已撤销该次合并",
+      unignoreSuccess: "已取消忽略",
+      aliasDeleteSuccess: "已删除别名",
+      loadFailed: "加载失败",
+    },
   },
 } satisfies Translations;
 
@@ -2633,5 +2677,44 @@ export interface Translations {
     categoriesUnit: string;
     confirmBatchDeleteCats: string;
     batchDeleteCatsWarning: string;
+    // Tag normalization (M1)
+    normalization: {
+      title: string;
+      subtitle: string;
+      clustersTab: string;
+      manualTab: string;
+      operationsTab: string;
+      aliasesTab: string;
+      totalComicsLabel: string;
+      mergeTargetLabel: string;
+      merge: string;
+      ignore: string;
+      clustersEmpty: string;
+      comicsUnit: string;
+      manualDesc: string;
+      sourceTagLabel: string;
+      sourceTagPlaceholder: string;
+      targetTagLabel: string;
+      targetTagPlaceholder: string;
+      applyManual: string;
+      manualSourceNotFound: string;
+      manualSameTag: string;
+      operationsEmpty: string;
+      kindMerge: string;
+      undoneBadge: string;
+      undo: string;
+      aliasesEmpty: string;
+      deleteAlias: string;
+      ignoresTitle: string;
+      ignoresEmpty: string;
+      unignore: string;
+      mergeSuccess: string;
+      manualMergeSuccess: string;
+      ignoreSuccess: string;
+      undoSuccess: string;
+      unignoreSuccess: string;
+      aliasDeleteSuccess: string;
+      loadFailed: string;
+    };
   };
 }

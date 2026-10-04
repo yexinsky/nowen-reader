@@ -435,16 +435,19 @@ func GetAllTags() ([]TagWithCount, error) {
 }
 
 // AddTagsToComic 为漫画添加标签（upsert）。
+// 标签名经 NormalizeTagName 归一：别名精确命中 → 同 normKey 既有标签（最早创建）
+// → 都没有才新建；展示名保留写入时的原名。空名跳过。
 func AddTagsToComic(comicID string, tagNames []string) error {
+	ix, err := loadTagNormIndex()
+	if err != nil {
+		return err
+	}
 	for _, name := range tagNames {
-		// Upsert tag
-		_, err := db.Exec(`INSERT INTO "Tag" ("name") VALUES (?) ON CONFLICT("name") DO NOTHING`, name)
-		if err != nil {
-			return err
+		if strings.TrimSpace(name) == "" {
+			continue
 		}
 
-		var tagID int
-		err = db.QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = ?`, name).Scan(&tagID)
+		tagID, err := ix.resolve(name)
 		if err != nil {
 			return err
 		}
@@ -524,8 +527,13 @@ func ClearAllTagsFromComic(comicID string) error {
 }
 
 // UpdateTagColor 更新标签颜色，标签不存在时自动创建。
+// 标签名经归一解析（别名/同 normKey 命中既有标签时更新其颜色）。
 func UpdateTagColor(tagName, color string) error {
-	_, err := db.Exec(`INSERT INTO "Tag" ("name", "color") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "color" = excluded."color"`, tagName, color)
+	tagID, err := NormalizeTagName(tagName)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE "Tag" SET "color" = ? WHERE "id" = ?`, color, tagID)
 	return err
 }
 

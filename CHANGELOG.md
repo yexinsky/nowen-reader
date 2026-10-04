@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+### Added (feat/tag-norm-m1 标签归一管理 M1)
+
+- 背景:JM 上游标签简繁/大小写/同义词不统一,且历史「下载自动打标」把作者名并进了标签(上游实测 author 与 tags 字段分离,3 个 aid 探针无交集,混入全部来自本地写入口)
+- 数据模型(迁移 v44):`TagAlias`(别名→规范标签,新写入自动归旧名)、`TagOperation`(合并操作日志,含逐书迁移记录支持精确撤销)、`TagNormIgnore`(预览忽略)
+- 写入口归一:`AddTagsToComic`/`UpdateTagColor`/`SetGroupTags`/`SetSeriesTags` 统一经 `NormalizeTagName`——别名精确命中 → 同归一键(trim+小写+内置高频简繁折叠表)既有标签 → 都没有才新建;展示名保留写入原名,归一键只用于匹配
+- 端点:`/api/tags/normalization/preview|operations|apply|undo|ignore|unignore|ignores` 与 `/api/tags/aliases` 增删查(GET=登录,写=admin);preview 按归一键聚合候选簇(变体+书目数,排除已忽略,按影响书目数降序分页),apply 事务内迁移 ComicTag+写别名+删源+记日志,undo 按日志反向恢复
+- 前端:标签管理页新增「标签归一」工作台(候选簇合并/忽略、手动归并同义词、最近操作一键撤销、别名与忽略管理),zh-CN/en 双语
 ### Changed (jm-backfill-modal 标签补全改为书库页弹窗)
 
 - 「书库补标签」更名为「标签补全」,入口从在线首页快捷区(`/jm/backfill` 独立页)迁移到书库页(/books)工具条按钮,点击弹出选择流弹窗(`components/jm/TagBackfillModal.tsx`);原独立页与路由移除

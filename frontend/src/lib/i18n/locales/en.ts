@@ -1358,6 +1358,50 @@ const en: Translations = {
     categoriesUnit: "categories",
     confirmBatchDeleteCats: "Confirm delete selected",
     batchDeleteCatsWarning: "This will remove these categories from all comics.",
+    // Tag normalization (M1)
+    normalization: {
+      title: "Tag Normalization",
+      subtitle: "Detect different spellings of the same tag (variants, translations, synonyms); merge or dismiss candidate clusters with undo support",
+      clustersTab: "Candidates",
+      manualTab: "Manual Merge",
+      operationsTab: "Recent Operations",
+      aliasesTab: "Aliases & Ignores",
+      // Clusters
+      totalComicsLabel: "comics involved",
+      mergeTargetLabel: "Merge target",
+      merge: "Merge",
+      ignore: "Ignore",
+      clustersEmpty: "No candidate clusters",
+      comicsUnit: "comics",
+      // Manual merge
+      manualDesc: "Merge one tag into another, for tags whose automatic normalization key differs but meanings match (synonyms, alternative translations).",
+      sourceTagLabel: "Source tag",
+      sourceTagPlaceholder: "Type or pick a source tag...",
+      targetTagLabel: "Target tag",
+      targetTagPlaceholder: "Select a target tag...",
+      applyManual: "Merge",
+      manualSourceNotFound: "Source tag not found, please pick one from the list",
+      manualSameTag: "Source and target tags must be different",
+      // Recent operations
+      operationsEmpty: "No operations yet",
+      kindMerge: "Merge",
+      undoneBadge: "Undone",
+      undo: "Undo",
+      // Aliases & ignores
+      aliasesEmpty: "No alias records",
+      deleteAlias: "Delete alias",
+      ignoresTitle: "Ignored Clusters",
+      ignoresEmpty: "Nothing ignored",
+      unignore: "Unignore",
+      // Feedback
+      mergeSuccess: "Merge completed, processed",
+      manualMergeSuccess: "Merge completed, processed",
+      ignoreSuccess: "Cluster ignored",
+      undoSuccess: "Operation undone",
+      unignoreSuccess: "Cluster unignored",
+      aliasDeleteSuccess: "Alias deleted",
+      loadFailed: "Failed to load",
+    },
   },
 };
 

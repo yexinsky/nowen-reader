@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"log"
 	"strings"
 )
@@ -39,7 +38,8 @@ func GetGroupTags(groupID int) ([]Tag, error) {
 }
 
 // SetGroupTags 设置系列的标签（替换所有现有标签）。
-// tagNames: 标签名称列表，不存在的标签会自动创建。
+// tagNames: 标签名称列表，不存在的标签会自动创建；
+// 名称经归一解析（别名/同 normKey 命中既有标签）。
 func SetGroupTags(groupID int, tagNames []string) error {
 	// 先删除现有关联
 	if _, err := db.Exec(`DELETE FROM "ComicGroupTag" WHERE "groupId" = ?`, groupID); err != nil {
@@ -50,24 +50,18 @@ func SetGroupTags(groupID int, tagNames []string) error {
 		return nil
 	}
 
-	// 确保标签存在并获取 ID
+	// 归一解析标签名并获取 ID
+	ix, err := loadTagNormIndex()
+	if err != nil {
+		return err
+	}
 	for _, name := range tagNames {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
-		// 查找或创建标签
-		var tagID int
-		err := db.QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = ?`, name).Scan(&tagID)
-		if err == sql.ErrNoRows {
-			// 创建新标签
-			res, err := db.Exec(`INSERT INTO "Tag" ("name", "color") VALUES (?, '')`, name)
-			if err != nil {
-				continue
-			}
-			id, _ := res.LastInsertId()
-			tagID = int(id)
-		} else if err != nil {
+		tagID, err := ix.resolve(name)
+		if err != nil {
 			continue
 		}
 		// 添加关联

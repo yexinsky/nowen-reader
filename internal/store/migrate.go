@@ -503,6 +503,38 @@ var Migrations = []Migration{
 			`DELETE FROM "ReadingSession" WHERE "endedAt" IS NULL AND "duration" = 0;`,
 		}, "\n"),
 	},
+	{
+		Version:     44,
+		Description: "Add TagAlias/TagOperation/TagNormIgnore tables for tag normalization M1",
+		SQL: strings.Join([]string{
+			// 别名 → 规范标签映射（合并后源标签名保留为别名，指向目标标签）
+			`CREATE TABLE IF NOT EXISTS "TagAlias" (
+				"alias"     TEXT NOT NULL PRIMARY KEY,
+				"tagId"     INTEGER NOT NULL,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT "TagAlias_tagId_fkey" FOREIGN KEY ("tagId")
+					REFERENCES "Tag" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+			);`,
+			`CREATE INDEX IF NOT EXISTS "TagAlias_tagId_idx" ON "TagAlias"("tagId");`,
+			// 合并操作日志（支持撤销）
+			`CREATE TABLE IF NOT EXISTS "TagOperation" (
+				"id"        INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+				"kind"      TEXT NOT NULL,
+				"fromNames" TEXT NOT NULL DEFAULT '[]',
+				"toTagId"   INTEGER NOT NULL,
+				"comicIds"  TEXT NOT NULL DEFAULT '[]',
+				"undone"    INTEGER NOT NULL DEFAULT 0,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE INDEX IF NOT EXISTS "TagOperation_undone_idx" ON "TagOperation"("undone");`,
+			`CREATE INDEX IF NOT EXISTS "TagOperation_createdAt_idx" ON "TagOperation"("createdAt" DESC);`,
+			// 归一预览忽略表（按 normKey 忽略整簇）
+			`CREATE TABLE IF NOT EXISTS "TagNormIgnore" (
+				"normKey"   TEXT NOT NULL PRIMARY KEY,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);`,
+		}, "\n"),
+	},
 }
 
 // ensureMigrationsTable creates the migrations tracking table.

@@ -31,6 +31,7 @@ import {
 import { useTranslation, useLocale } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
 import { PageContent, PageHeader } from "@/components/PageHeader";
+import { TagNormalizationPanel } from "@/components/TagNormalizationPanel";
 
 interface TagItem {
   id: number;
@@ -878,6 +879,11 @@ export default function TagManagerPage() {
             {t.tagManager?.categoriesTab || "分类"} ({categories.length})
           </button>
         </div>
+
+        {/* 标签归一工作台 */}
+        {activeTab === "tags" && isAdmin && (
+          <TagNormalizationPanel tags={tags} onDataChanged={loadData} />
+        )}
 
         {/* AI 智能生成面板 */}
         {showAIPanel && isAdmin && (

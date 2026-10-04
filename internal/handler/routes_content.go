@@ -24,6 +24,38 @@ func registerContentRoutes(api *gin.RouterGroup) {
 		tagAdmin.POST("/merge", tag.MergeTags)
 	}
 
+	// Tag Normalization M1（读取与现有 tags 一致需登录，写操作需管理员）
+	// ============================================================
+	tagNormRead := api.Group("/tags/normalization")
+	tagNormRead.Use(middleware.AuthRequired())
+	{
+		tagNormRead.GET("/preview", tag.PreviewTagNormalization)
+		tagNormRead.GET("/operations", tag.ListTagOperations)
+		tagNormRead.GET("/ignores", tag.ListTagNormIgnores)
+	}
+
+	tagNormAdmin := api.Group("/tags/normalization")
+	tagNormAdmin.Use(middleware.AdminRequired())
+	{
+		tagNormAdmin.POST("/apply", tag.ApplyTagNormalization)
+		tagNormAdmin.POST("/undo", tag.UndoTagNormalization)
+		tagNormAdmin.POST("/ignore", tag.IgnoreTagNormKey)
+		tagNormAdmin.POST("/unignore", tag.UnignoreTagNormKey)
+	}
+
+	aliasesRead := api.Group("/tags/aliases")
+	aliasesRead.Use(middleware.AuthRequired())
+	{
+		aliasesRead.GET("", tag.ListTagAliases)
+	}
+
+	aliasesAdmin := api.Group("/tags/aliases")
+	aliasesAdmin.Use(middleware.AdminRequired())
+	{
+		aliasesAdmin.POST("", tag.AddTagAlias)
+		aliasesAdmin.DELETE("", tag.DeleteTagAlias)
+	}
+
 	// ============================================================
 	// Categories (Phase 2)
 	// ============================================================
