@@ -331,3 +331,24 @@ export interface JmTagFavorite {
   /** 收藏时间,nowen 后端 nowStamp 格式(本地时区秒精度) */
   createdAt: string;
 }
+
+/* ── 书库补标签(私有扩展,非 MOBILE_API.md 契约) ── */
+
+/** 无标签漫画候选(searchKeyword 为后端按标题清洗出的默认搜索词,前端可改) */
+export interface JmBackfillCandidate {
+  id: string;
+  libraryId: string;
+  title: string;
+  author: string;
+  searchKeyword: string;
+}
+
+/** match 结果条目(score 0~1,confidence 由后端按阈值分档;list 已按 score 倒序) */
+export interface JmBackfillMatch {
+  aid: string;
+  title: string;
+  author: string;
+  tags: string[];
+  score: number;
+  confidence: "high" | "medium" | "low";
+}

@@ -39,6 +39,8 @@ import {
   type JmDownloadStartParams,
   type JmTagFavorite,
   type JmTagFavoriteType,
+  type JmBackfillCandidate,
+  type JmBackfillMatch,
 } from "./types";
 
 const DEFAULT_TIMEOUT = 30000;
@@ -374,4 +376,34 @@ export function jmAddTagFavorite(tag: string, type: JmTagFavoriteType): Promise<
 /** 取消收藏(type 缺省 tag;不存在幂等成功) */
 export function jmRemoveTagFavorite(tag: string, type: JmTagFavoriteType): Promise<{ ok: boolean }> {
   return jmRequest("/api/tag-favorites", { method: "DELETE", query: { tag, type } });
+}
+
+/* ── 书库补标签(私有扩展,/api/jm/backfill) ── */
+
+/** 无标签漫画清单(仅 comic/mixed 且有管理权的书库;排除小说行) */
+export function jmBackfillCandidates(): Promise<{ list: JmBackfillCandidate[]; total: number }> {
+  return jmRequest<{ list: JmBackfillCandidate[]; total: number }>("/api/backfill/candidates");
+}
+
+/** 关键词搜索 + 标题打分(不改库;后端全局限速 ≥1.2s/次) */
+export function jmBackfillMatch(body: {
+  keyword: string;
+  title?: string;
+  author?: string;
+}): Promise<{ list: JmBackfillMatch[]; total: number; keyword: string }> {
+  return jmRequest<{ list: JmBackfillMatch[]; total: number; keyword: string }>("/api/backfill/match", {
+    method: "POST",
+    body,
+  });
+}
+
+/** 按 aid 拉详情写标签/作者(标签由后端从详情提取;author/metadataSource 仅空缺回填) */
+export function jmBackfillApply(body: {
+  comicId: string;
+  aid: string;
+}): Promise<{ applied: number; tags: string[]; author: string }> {
+  return jmRequest<{ applied: number; tags: string[]; author: string }>("/api/backfill/apply", {
+    method: "POST",
+    body,
+  });
 }

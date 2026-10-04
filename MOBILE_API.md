@@ -860,3 +860,96 @@ bash scripts/jm-download-e2e.sh
 # 存储层单测(增查删幂等/trim/倒序/重开重读)
 go test ./internal/jm/ -run TestTagFavorite -v
 ```
+
+## 8. 私有扩展：书库补标签（`/api/jm/backfill`，仅内置 Go 服务实现）
+
+用 JM 在线搜索给书库中**无任何标签**的旧书批量补标签。无状态三端点，批量循环由前端驱动：
+「无标签」本身即进度源（应用成功的漫画自动退出 candidates），刷新页面天然断点续跑。
+
+- 候选范围：`comic`/`mixed` 书库且当前用户有管理权；排除 `type='novel'` 行
+- 搜索词清洗（服务端）：标题剥噪声括号（汉化组/搬运/raw 等）→ 卷话后缀（第N卷/vol.N）→
+  尾部数字 id（4~7 位，`漫画名-125734` 形态）；纯数字标题保留（上游车号直达语义）
+- 上游纪律：`match`/`apply` 共用全局限速器，到上游的节奏恒 ≥1.2s/次
+
+### 8.1 端点总览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/jm/backfill/candidates` | 无标签漫画清单（附标题清洗出的默认搜索词） |
+| POST | `/api/jm/backfill/match` | 关键词全站搜索第 1 页 + 标题打分（**不改库**） |
+| POST | `/api/jm/backfill/apply` | 按 `aid` 拉详情写标签/作者（与下载入库自动打标同口径） |
+
+### 8.2 GET /api/jm/backfill/candidates — 候选清单
+
+**响应 data**
+
+```json
+{
+  "list": [
+    {
+      "id": "a1b2c3…",
+      "libraryId": "lib-1",
+      "title": "呑噬万物-125734",
+      "author": "",
+      "searchKeyword": "呑噬万物"
+    }
+  ],
+  "total": 1
+}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| list[].id | string | Comic ID（apply 的 `comicId`） |
+| list[].searchKeyword | string | 服务端 `jmCleanSearchKeyword(title)` 结果；空串表示"无效"（前端要求手填） |
+| total | int | = list.length |
+
+### 8.3 POST /api/jm/backfill/match — 搜索 + 打分
+
+**请求体** `{ "keyword": "呑噬万物", "title": "呑噬万物-125734", "author": "" }`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| keyword | string | ✅ | 1..100 字符（unicode 字符数），否则 422 |
+| title / author | string | 否 | 本地标题/作者，参与打分（作者一致 +0.1） |
+
+**响应 data**：`{ "list": JmMatchItem[], "total", "keyword" }`，list 按 `score` 倒序，最多 8 条。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| aid / title / author | string | JM 结果条目 |
+| tags | string[] | 搜索条目自带标签（normalizeJmTags 口径，上限 30），可能为空 |
+| score | float | 0~1：归一全等 1.0 / 互相包含 0.75 / 其余 CJK bigram Jaccard×0.7，作者一致 +0.1 |
+| confidence | string | `high`(≥0.85) / `medium`(≥0.65) / `low` |
+
+**错误**：`422 {"detail": "keyword 必填" | "keyword 过长(上限 100 字符)"}`；上游失败按 §0 错误包装。
+
+### 8.4 POST /api/jm/backfill/apply — 写入标签
+
+**请求体** `{ "comicId": "a1b2c3…", "aid": "125734" }`（两字段均必填，否则 422）
+
+后端**自行拉取详情**提取标签（不信任客户端透传），写入口径与 §6 下载入库自动打标一致：
+
+1. 标签：`normalizeJmTags`（trim/去重/上限 30）→ `AddTagsToComic`（upsert，不存在自动创建）；
+2. 作者：占位符过滤（"N/A" 等不入库），仅当 Comic.`author` 为空时回填（不覆盖刮削/手动结果）；
+3. `metadataSource`：仅当为空时写 `"jm"` 留痕。
+
+**响应 data** `{ "applied": 12, "tags": ["…"], "author": "山本ティナ" }`（`applied=0` 表示上游详情无标签，未写库）。
+
+**错误**：`403`（无该书库管理权限）、`404`（漫画不存在）、`422`（参数缺失）、上游错误按 §0 包装。
+
+### 8.5 前端消费对照
+
+| 入口 | 位置 | 行为 |
+|---|---|---|
+| 在线首页入口 | `app/jm/page.tsx` 快捷区 | 「书库补标签」（Tags 图标）→ `/jm/backfill` |
+| 补标签页 | `app/jm/backfill/page.tsx` | 行内可编辑搜索词、单行「匹配/应用/备选/跳过」、「自动匹配未处理」顺序循环（可停止）、「应用全部高置信」批量写入；筛选（待处理/已处理/全部） |
+
+### 8.6 测试
+
+```bash
+# 清洗/打分单测
+go test ./internal/handler -run "TestJmCleanSearchKeyword|TestJmScoreMatch" -v
+# 无标签候选查询单测
+go test ./internal/store -run TestGetUntaggedComics -v
+```

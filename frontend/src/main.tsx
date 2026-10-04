@@ -49,6 +49,7 @@ const JmWeek = React.lazy(() => import("@/app/jm/week/page"));
 const JmFavorites = React.lazy(() => import("@/app/jm/favorites/page"));
 const JmHistory = React.lazy(() => import("@/app/jm/history/page"));
 const JmTags = React.lazy(() => import("@/app/jm/tags/page"));
+const JmBackfill = React.lazy(() => import("@/app/jm/backfill/page"));
 const JmComicDetail = React.lazy(() => import("@/app/jm/comic/[aid]/page"));
 const JmReader = React.lazy(() => import("@/app/jm/reader/[pid]/page"));
 
@@ -142,6 +143,7 @@ function AppRoutes() {
         <Route path="jm/favorites" element={<JmFavorites />} />
         <Route path="jm/history" element={<JmHistory />} />
         <Route path="jm/tags" element={<JmTags />} />
+        <Route path="jm/backfill" element={<JmBackfill />} />
       </Route>
 
       <Route element={<AnimatedOutlet />}>
