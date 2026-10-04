@@ -48,6 +48,7 @@ interface TagItem {
   name: string;
   color: string;
   count: number;
+  kind?: "tag" | "author";
 }
 
 interface CategoryItem {
@@ -62,7 +63,8 @@ interface CategoryItem {
 
 async function fetchTags(): Promise<TagItem[]> {
   try {
-    const res = await fetch(apiPath("/api/tags"));
+    // kind=all：内容标签 + 作者标签（作者行用徽章区分）
+    const res = await fetch(apiPath("/api/tags?kind=all"));
     if (!res.ok) return [];
     const data = await res.json();
     return data.tags || [];
@@ -1579,26 +1581,33 @@ export default function TagManagerPage() {
                       )}
                     </div>
 
-                    {/* Name (editable) */}
-                    {editingTag === tag.name ? (
-                      <input
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.currentTarget.blur();
-                          }
-                          if (e.key === "Escape") {
-                            setEditingTag(null);
-                          }
-                        }}
-                        onBlur={() => handleRenameTag(tag.name)}
-                        className="flex-1 min-w-0 rounded-lg bg-background px-2 py-1 text-sm text-foreground outline-none ring-1 ring-accent/50"
-                        autoFocus
-                      />
-                    ) : (
-                      <span className="flex-1 min-w-0 truncate text-sm font-medium text-foreground">{tag.name}</span>
-                    )}
+                    {/* Name (editable) + author badge */}
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      {editingTag === tag.name ? (
+                        <input
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.currentTarget.blur();
+                            }
+                            if (e.key === "Escape") {
+                              setEditingTag(null);
+                            }
+                          }}
+                          onBlur={() => handleRenameTag(tag.name)}
+                          className="min-w-0 flex-1 rounded-lg bg-background px-2 py-1 text-sm text-foreground outline-none ring-1 ring-accent/50"
+                          autoFocus
+                        />
+                      ) : (
+                        <span className="min-w-0 truncate text-sm font-medium text-foreground">{tag.name}</span>
+                      )}
+                      {tag.kind === "author" && (
+                        <span className="shrink-0 rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-400 ring-1 ring-purple-500/30">
+                          {t.tagManager?.authorTag || "作者"}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Count badge */}
                     <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-xs text-muted">

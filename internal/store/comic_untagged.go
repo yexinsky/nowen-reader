@@ -34,7 +34,8 @@ func ListTitleBackfillCandidates(libraryIDs []string) ([]UntaggedComic, error) {
 }
 
 // queryBackfillComics 补全候选共享查询:书库范围 + 排除 novel + addedAt 倒序;
-// untaggedOnly 时追加 NOT EXISTS ComicTag(标签补全的进度源)。
+// untaggedOnly 时追加 NOT EXISTS ComicTag JOIN Tag kind='tag'
+// (「无标签」只统计内容标签关联——只有作者标签的书仍视为无标签、仍进补标候选)。
 func queryBackfillComics(libraryIDs []string, untaggedOnly bool) ([]UntaggedComic, error) {
 	out := make([]UntaggedComic, 0)
 	if len(libraryIDs) == 0 {
@@ -43,7 +44,11 @@ func queryBackfillComics(libraryIDs []string, untaggedOnly bool) ([]UntaggedComi
 	untaggedClause := ""
 	if untaggedOnly {
 		untaggedClause = `
-		  AND NOT EXISTS (SELECT 1 FROM "ComicTag" ct WHERE ct."comicId" = c."id")`
+		  AND NOT EXISTS (
+		    SELECT 1 FROM "ComicTag" ct
+		    JOIN "Tag" t ON t."id" = ct."tagId"
+		    WHERE ct."comicId" = c."id" AND COALESCE(t."kind", 'tag') = 'tag'
+		  )`
 	}
 	query := `
 		SELECT c."id", COALESCE(c."libraryId", ''), c."title", c."filename",

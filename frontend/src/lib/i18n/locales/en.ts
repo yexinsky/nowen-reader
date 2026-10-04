@@ -1307,6 +1307,7 @@ const en: Translations = {
   tagManager: {
     title: "Tag & Category Manager",
     tagsTab: "Tags",
+    authorTag: "Author",
     categoriesTab: "Categories",
     searchPlaceholder: "Search tags or categories...",
     noTags: "No tags yet",

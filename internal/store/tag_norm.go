@@ -100,12 +100,14 @@ func TagNormKey(name string) string {
 type tagNormIndex struct {
 	aliases map[string]int   // alias(已 trim) -> tagId
 	groups  map[string][]int // normKey -> tagIds (升序)
+	kinds   map[int]string   // tagId -> kind（'tag'|'author'；NULL/空 视为 'tag'）
 }
 
 func loadTagNormIndex() (*tagNormIndex, error) {
 	ix := &tagNormIndex{
 		aliases: make(map[string]int),
 		groups:  make(map[string][]int),
+		kinds:   make(map[int]string),
 	}
 
 	rows, err := db.Query(`SELECT "alias", "tagId" FROM "TagAlias"`)
@@ -127,19 +129,20 @@ func loadTagNormIndex() (*tagNormIndex, error) {
 	}
 	rows.Close()
 
-	rows, err = db.Query(`SELECT "id", "name" FROM "Tag" ORDER BY "id" ASC`)
+	rows, err = db.Query(`SELECT "id", "name", COALESCE("kind", 'tag') FROM "Tag" ORDER BY "id" ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var name, kind string
+		if err := rows.Scan(&id, &name, &kind); err != nil {
 			return nil, err
 		}
 		key := TagNormKey(name)
 		ix.groups[key] = append(ix.groups[key], id)
+		ix.kinds[id] = kind
 	}
 	return ix, rows.Err()
 }
@@ -504,7 +507,8 @@ type TagNormCluster struct {
 }
 
 // PreviewTagNormalization 返回同 normKey 且变体数 > 1 的标签簇，
-// 排除已忽略的 normKey，按 totalComics 降序，内存分页。
+// 排除已忽略的 normKey 与作者标签（作者名变体不参与内容标签合并），
+// 按 totalComics 降序，内存分页。
 func PreviewTagNormalization(page, pageSize int) ([]TagNormCluster, int, error) {
 	if page < 1 {
 		page = 1
@@ -516,7 +520,7 @@ func PreviewTagNormalization(page, pageSize int) ([]TagNormCluster, int, error) 
 		pageSize = 200
 	}
 
-	// 标签量级千级：一条 JOIN 聚合后内存分组
+	// 标签量级千级：一条 JOIN 聚合后内存分组（作者标签不参与内容标签合并，排除）
 	type tagRow struct {
 		id, count int
 		name      string
@@ -526,6 +530,7 @@ func PreviewTagNormalization(page, pageSize int) ([]TagNormCluster, int, error) 
 		`SELECT t."id", t."name", COUNT(ct."comicId")
 		 FROM "Tag" t
 		 LEFT JOIN "ComicTag" ct ON ct."tagId" = t."id"
+		 WHERE COALESCE(t."kind", 'tag') = 'tag'
 		 GROUP BY t."id"
 		 ORDER BY t."id" ASC`,
 	)

@@ -256,6 +256,7 @@ func ListTagScenarios() ([]TagScenario, error) {
 // ListTagScenariosWithTags 返回按情景分组的标签清单与未分配标签。
 // list 按 sortOrder ASC, id ASC；组内/unassigned 标签按 name ASC；
 // comicCount = LEFT JOIN ComicTag 计数。unassigned 永远非 nil（可为空数组）。
+// 作者标签（kind='author'）不参与情景分类，组内与未分配集合均排除。
 func ListTagScenariosWithTags() (groups []TagScenarioGroup, unassigned []TagScenarioTag, err error) {
 	scenarios, err := ListTagScenarios()
 	if err != nil {
@@ -273,6 +274,7 @@ func ListTagScenariosWithTags() (groups []TagScenarioGroup, unassigned []TagScen
 		SELECT t."id", t."name", t."scenarioId", COUNT(ct."comicId") AS cnt
 		FROM "Tag" t
 		LEFT JOIN "ComicTag" ct ON ct."tagId" = t."id"
+		WHERE COALESCE(t."kind", 'tag') = 'tag'
 		GROUP BY t."id"
 		ORDER BY t."name" ASC
 	`)

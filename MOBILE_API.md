@@ -750,7 +750,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 6. **归档**（仅对库目录）：`<destDir>/<清洗后的标题>.zip`；同名自动追加 ` (2)`…` (99)`，**绝不覆盖或删除目标目录中的既有文件**。
 7. **清理**：任务结束（成功/失败/取消）后整体删除沙箱 `<taskId>/` 目录 —— 即“打包成 zip 后清理下载文件夹”。
 8. **入库**：`destDir` 属于某个书库时，归档后异步触发该书库扫描（全局同时只允许一个扫描，冲突时最多退避重试 3 次 × 15s）。
-9. **自动标签与作者同步**（入库后增强，`#28` `downloadTags` 开关控制，默认开）：扫描触发后轮询等待归档 zip 对应的 Comic 记录产生（`PathToID(libraryID, zipName)` 确定性定位，2s 间隔、最长 90s），然后：① `AddTagsToComic` 把任务快照的 `tags` 挂到书库漫画（标签不存在自动创建、幂等）；② **作者同步**——有效作者名（trim 后非占位符：`N/A`/`-`/`未知`/`default_author` 等）并入标签清单（书库详情页标签区可点可筛选），并在书库记录 `author` 字段为空时回填（不覆盖刮削/手动结果）。测试目录（非书库）不入库不打标；轮询超时仅记日志放弃，不影响下载结果；分类**不**自动写。
+9. **自动标签与作者同步**（入库后增强，`#28` `downloadTags` 开关控制，默认开）：扫描触发后轮询等待归档 zip 对应的 Comic 记录产生（`PathToID(libraryID, zipName)` 确定性定位，2s 间隔、最长 90s），然后：① `AddTagsToComic` 把任务快照的 `tags` 挂到书库漫画（标签不存在自动创建、幂等，**纯内容标签**）；② **作者同步**——有效作者名（trim 后非占位符：`N/A`/`-`/`未知`/`default_author` 等）走 `AddAuthorTagToComic` 写入**独立 author-kind 标签**（不再并入内容标签清单，见 §10），作者名与既有内容标签同名时日志跳过不写，并在书库记录 `author` 字段为空时回填（不覆盖刮削/手动结果）。测试目录（非书库）不入库不打标；轮询超时仅记日志放弃，不影响下载结果；分类**不**自动写。
 
 ### 6.6 并发与限流
 
@@ -959,8 +959,8 @@ go test ./internal/jm/ -run TestTagFavorite -v
 
 后端**自行拉取详情**提取标签（不信任客户端透传），写入口径与 §6 下载入库自动打标一致：
 
-1. 标签：`normalizeJmTags`（trim/去重/上限 30）→ `AddTagsToComic`（upsert，不存在自动创建）；
-2. 作者：占位符过滤（"N/A" 等不入库），仅当 Comic.`author` 为空时回填（不覆盖刮削/手动结果）；
+1. 标签：`normalizeJmTags`（trim/去重/上限 30）→ `AddTagsToComic`（upsert，不存在自动创建，**纯内容标签**）；
+2. 作者：占位符过滤（"N/A" 等不入库）；有效作者名追加 `AddAuthorTagToComic` 写入**独立 author-kind 标签**（同名内容标签撞车时日志跳过，见 §10），且仅当 Comic.`author` 为空时回填字段（不覆盖刮削/手动结果）；
 3. `metadataSource`：仅当为空时写 `"jm"` 留痕。
 
 **响应 data** `{ "applied": 12, "tags": ["…"], "author": "山本ティナ" }`（`applied=0` 表示上游详情无标签，未写库）。
@@ -1097,4 +1097,54 @@ go test ./internal/store -run "TestGetUntaggedComics|TestListTitleBackfillCandid
 go test ./internal/store -run "TagScenario" -count=1 -v
 # 端点参数校验 + AI 门控/严格匹配（mock LLM）单测
 go test ./internal/handler -run "TagScenario" -count=1 -v
+```
+
+---
+
+## 10. 私有扩展：作者标签与内容标签结构性区分（`/api/tags`，仅内置 Go 服务实现）
+
+下载自动打标历史上把作者名并入普通标签一起写 `ComicTag`，书库里作者名与内容标签混排；
+上游 `author` 与 `tags` 本是分离字段。现改为**写入口自动区分**：作者走独立 `author`-kind 标签
+（`AddAuthorTagToComic`），内容标签保持纯净化（`AddTagsToComic` 只建/只挂内容标签）。
+
+- 数据模型：`Tag.kind` 列（迁移 v46，`'tag'`=内容标签（默认）/`'author'`=作者标签）+ `Tag_kind_idx` 索引；
+  存量确定性迁移：与某本书 `Comic.author` 字面相等的普通标签自动升级为 `author`-kind（关联不动）
+- 作者写入口归一：与内容标签同一套归一索引（别名精确命中 → 同 normKey 既有标签）；
+  命中既有 `author` 标签直接挂链（幂等），未命中才新建 `author`-kind；
+  **命中既有内容标签（作者名撞内容标签名，如作者恰好叫"萝莉"）→ 不升级、不挂**（同名不同义宁可不写，调用方日志跳过）
+- 读取口径：`GET /api/tags` 缺省只返回内容标签（书库筛选向后语义）；补标候选（`GET /api/jm/backfill/candidates`
+  的 `mode=tags`）只认内容标签关联——只有作者标签的书仍视为"无标签"、仍进补标候选；
+  情景分组（§9.2）与归一预览（`/api/tags/normalization/preview`）排除作者标签；
+  **按标签搜书不受影响**（作者标签参与 join，按作者名搜书是合法需求）
+
+### 10.1 GET /api/tags — 标签清单（kind 参数）
+
+🔒 需登录。可选 query：
+
+| 参数 | 取值 | 说明 |
+|---|---|---|
+| `kind` | `tag`（缺省）/ `author` / `all` | `tag` = 内容标签（书库筛选向后语义）；`author` = 作者标签；`all` = 全部（tag-manager 标签管理用）。非法值 → **400** |
+
+**响应**
+
+```json
+{
+  "tags": [
+    { "id": 1, "name": "萝莉", "color": "default", "count": 12, "kind": "tag" },
+    { "id": 2, "name": "山本ティナ", "color": "default", "count": 3, "kind": "author" }
+  ]
+}
+```
+
+- 条目按 `name ASC`；`count` = 该标签关联的 Comic 数（LEFT JOIN ComicTag 计数）
+- `kind` 字段（camelCase）恒有值：`"tag"` / `"author"`
+- 语义变化：缺省（`kind=tag`）响应**不再包含作者标签**——书库筛选/标签面板数据源已与作者名解耦
+
+### 10.2 测试
+
+```bash
+# 迁移回填 + AddAuthorTagToComic + 读取口径（untagged/情景/归一预览）单测
+go test ./internal/store -run "TagAuthor|AuthorTag|Untagged" -count=1 -v
+# GET /api/tags kind 参数契约（缺省/author/all/非法值）单测
+go test ./internal/handler -run "ListTagsKindParam" -count=1 -v
 ```

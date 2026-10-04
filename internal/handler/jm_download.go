@@ -13,6 +13,7 @@ package handler
 // 写入目标目录(同名递增后缀,绝不覆盖既有文件)→ 清理沙箱 → 触发书库扫描入库。
 
 import (
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -195,15 +196,16 @@ func jmSyncAuthorName(author string) string {
 
 // jmApplyTagsWhenComicExists 下载入库自动标签与作者同步(MOBILE_API.md §6):轮询等待
 // 归档 zip 对应的 Comic 记录产生(PathToID 可确定性算出),然后:
-// ① 挂 JM 标签(任务快照 tags,不存在自动创建);② 作者同步:有效作者名(非占位符)
-// 并入标签清单(书库详情页标签区可点可筛选),并把 Comic.author 元数据回填(仅当为空,
-// 不覆盖刮削/手动结果)。只记日志、绝不向任务注错——下载本体已成功,打标是附加增强。
+// ① 挂 JM 内容标签(任务快照 tags,不存在自动创建);② 作者同步:有效作者名(非占位符)
+// 以独立 author-kind 标签挂链(与内容标签结构性区分,同名内容标签撞车时日志跳过),
+// 并把 Comic.author 元数据回填(仅当为空,不覆盖刮削/手动结果)。
+// 只记日志、绝不向任务注错——下载本体已成功,打标是附加增强。
 func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
 	if t.LibraryID == "" || t.ZipName == "" {
 		return
 	}
-	// 标签清单 = 快照 tags + 有效作者(去重;占位符作者如 "N/A" 不参与)
-	tags := make([]string, 0, len(t.Tags)+1)
+	// 标签清单 = 快照 tags(纯内容标签;作者不再并入,另走 author-kind 独立标签)
+	tags := make([]string, 0, len(t.Tags))
 	seen := map[string]struct{}{}
 	for _, tag := range t.Tags {
 		if tag == "" {
@@ -216,12 +218,7 @@ func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
 		tags = append(tags, tag)
 	}
 	author := jmSyncAuthorName(t.Author)
-	if author != "" {
-		if _, dup := seen[author]; !dup {
-			tags = append(tags, author)
-		}
-	}
-	if len(tags) == 0 {
+	if author == "" && len(tags) == 0 {
 		return
 	}
 	if !jmService().Settings().DownloadTags {
@@ -232,10 +229,22 @@ func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
 	for {
 		exists, err := store.ComicRelativePathExists(t.LibraryID, t.ZipName, "")
 		if err == nil && exists {
-			if err := store.AddTagsToComic(comicID, tags); err != nil {
-				log.Printf("[jm] 自动标签写入失败(comic=%s): %v", comicID, err)
-			} else {
-				log.Printf("[jm] 已自动添加 %d 个标签(comic=%s, aid=%s)", len(tags), comicID, t.Aid)
+			if len(tags) > 0 {
+				if err := store.AddTagsToComic(comicID, tags); err != nil {
+					log.Printf("[jm] 自动标签写入失败(comic=%s): %v", comicID, err)
+				} else {
+					log.Printf("[jm] 已自动添加 %d 个标签(comic=%s, aid=%s)", len(tags), comicID, t.Aid)
+				}
+			}
+			// 作者独立标签(author-kind):撞既有内容标签同名时日志跳过,不影响其余流程
+			if author != "" {
+				if err := store.AddAuthorTagToComic(comicID, author); err != nil {
+					if errors.Is(err, store.ErrAuthorNameConflictsWithTag) {
+						log.Printf("[jm] 作者名与既有内容标签同名,跳过作者标签(comic=%s, author=%s)", comicID, author)
+					} else {
+						log.Printf("[jm] 作者标签写入失败(comic=%s): %v", comicID, err)
+					}
+				}
 			}
 			// 作者元数据回填:仅当书库记录的 author 为空,不覆盖刮削/手动结果
 			if author != "" {

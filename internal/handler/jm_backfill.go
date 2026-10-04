@@ -15,6 +15,7 @@ package handler
 // 标签 normalizeJmTags(上限 30)、作者过占位符、author/metadataSource 仅空缺回填。
 
 import (
+	"errors"
 	"log"
 	"regexp"
 	"sort"
@@ -517,7 +518,8 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 	})
 
 	// POST /backfill/apply — 后端自行拉详情取标签(不信任客户端透传),
-	// 写入口径与下载入库自动打标一致;标签不存在自动创建(AddTagsToComic upsert)
+	// 写入口径与下载入库自动打标一致;内容标签不存在自动创建(AddTagsToComic upsert),
+	// 有效作者名追加 author-kind 独立标签(AddAuthorTagToComic)
 	g.POST("/backfill/apply", func(c *gin.Context) {
 		var body struct {
 			ComicID string `json:"comicId"`
@@ -552,6 +554,16 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 				return
 			}
 			applied = len(tags)
+		}
+		// 作者独立标签(author-kind):与下载入库口径一致;撞既有内容标签同名仅日志跳过
+		if author != "" {
+			if err := store.AddAuthorTagToComic(body.ComicID, author); err != nil {
+				if errors.Is(err, store.ErrAuthorNameConflictsWithTag) {
+					log.Printf("[jm] 补标签:作者名与既有内容标签同名,跳过作者标签(comic=%s, author=%s)", body.ComicID, author)
+				} else {
+					log.Printf("[jm] 补标签作者标签写入失败(comic=%s): %v", body.ComicID, err)
+				}
+			}
 		}
 		// 作者与元数据来源仅空缺回填,不覆盖刮削/手动结果
 		fields := map[string]interface{}{}

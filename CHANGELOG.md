@@ -1,6 +1,14 @@
 # Changelog
 
 ## Unreleased
+### Added (feat/author-tag-kind 作者标签与漫画标签结构性区分)
+
+- 区分在**入库时自动完成**,不依赖人工归组(迁移 v46:`Tag.kind` 列 tag|author + 确定性存量回填——与某本书 Comic.author 字面相等的普通标签自动升级为 author-kind)
+- 写入口分离:下载自动打标与标签补全 apply 的作者不再并入内容标签清单,统一走新入口 `AddAuthorTagToComic`(author-kind 独立标签挂链;与内容标签同名撞车时哨兵跳过宁可不写,归一/别名口径复用)
+- 读取口径三处区分:书库筛选数据源(GetAllTags)排除 author;情景分类(成员/未分配)排除 author;归一预览聚类排除 author;**漫画搜索不排除**——按作者名搜书依然可用
+- `GET /api/tags` 加可选 `kind=tag|author|all`(缺省 tag 向后兼容),响应条目带 kind
+- 前端:标签与分类页列表改拉 kind=all,author 标签显示紫色「作者」徽章;书库页与筛选面板零改动(后端缺省已排除)
+- 补标候选口径:只有 author 标签的书仍视为「无标签」,照常进补标候选
 ### Added (feat/tag-scenarios 标签情景分类)
 
 - 标签级「情景」维度(迁移 v45:TagScenario 表 + Tag.scenarioId,删除情景 SET NULL 回未分配;与 Comic 级 Category 体系无关):书库筛选标签时可按情景分组快速定位

@@ -18,8 +18,18 @@ func NewTagHandler() *TagHandler {
 }
 
 // GET /api/tags — List all tags
+// kind 可选 query：tag（缺省，内容标签，书库筛选向后语义）/ author（作者标签）/
+// all（全部，tag-manager 标签管理用）；非法值 → 400。
+// 响应条目含 kind 字段（"tag"|"author"）。
 func (h *TagHandler) ListTags(c *gin.Context) {
-	tags, err := store.GetAllTags()
+	kind := c.DefaultQuery("kind", store.TagKindTag)
+	switch kind {
+	case store.TagKindTag, store.TagKindAuthor, "all":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be tag, author or all"})
+		return
+	}
+	tags, err := store.GetTagsByKind(kind)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tags"})
 		return

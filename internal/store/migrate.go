@@ -553,6 +553,19 @@ var Migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS "Tag_scenarioId_idx" ON "Tag"("scenarioId");`,
 		}, "\n"),
 	},
+	{
+		Version:     46,
+		Description: "Add Tag.kind for structural author/content tag separation and backfill from Comic.author",
+		SQL: strings.Join([]string{
+			// 标签种类：'tag'=内容标签（默认），'author'=作者标签（AddAuthorTagToComic 写入）
+			`ALTER TABLE "Tag" ADD COLUMN "kind" TEXT NOT NULL DEFAULT 'tag';`,
+			// 存量确定性迁移：与某本书 Comic.author 字面相等的普通标签 → 升级为 author-kind
+			`UPDATE "Tag" SET "kind" = 'author'
+			 WHERE "kind" = 'tag'
+			   AND "name" IN (SELECT DISTINCT "author" FROM "Comic" WHERE COALESCE("author",'') != '');`,
+			`CREATE INDEX IF NOT EXISTS "Tag_kind_idx" ON "Tag"("kind");`,
+		}, "\n"),
+	},
 }
 
 // ensureMigrationsTable creates the migrations tracking table.

@@ -404,34 +404,14 @@ type TagWithCount struct {
 	Name  string `json:"name"`
 	Color string `json:"color"`
 	Count int    `json:"count"`
+	Kind  string `json:"kind"` // 'tag'=内容标签 / 'author'=作者标签
 }
 
-// GetAllTags 返回所有标签及其漫画计数。
+// GetAllTags 返回所有内容标签（kind='tag'）及其漫画计数。
+// 书库筛选/标签面板数据源：作者标签（kind='author'，AddAuthorTagToComic 写入）
+// 不参与筛选混排，需要作者标签时用 GetTagsByKind("author"|"all")。
 func GetAllTags() ([]TagWithCount, error) {
-	rows, err := db.Query(`
-		SELECT t."id", t."name", t."color", COUNT(ct."comicId") as cnt
-		FROM "Tag" t
-		LEFT JOIN "ComicTag" ct ON ct."tagId" = t."id"
-		GROUP BY t."id"
-		ORDER BY t."name" ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tags []TagWithCount
-	for rows.Next() {
-		var t TagWithCount
-		if err := rows.Scan(&t.ID, &t.Name, &t.Color, &t.Count); err != nil {
-			continue
-		}
-		tags = append(tags, t)
-	}
-	if tags == nil {
-		tags = []TagWithCount{}
-	}
-	return tags, nil
+	return GetTagsByKind(TagKindTag)
 }
 
 // AddTagsToComic 为漫画添加标签（upsert）。
