@@ -867,9 +867,13 @@ go test ./internal/jm/ -run TestTagFavorite -v
 「无标签」本身即进度源（应用成功的漫画自动退出 candidates），刷新页面天然断点续跑。
 
 - 候选范围：`comic`/`mixed` 书库且当前用户有管理权；排除 `type='novel'` 行
-- 搜索词清洗（服务端）：连字符分隔的数字 id 段（4~7 位；尾部与中部均覆盖，如
-  `[作者]标题-224406-[作者]标题`）并对重复段去重（`A-A` → `A`）→ 噪声括号（汉化组/搬运/raw 等）→
-  卷话后缀（第N卷/vol.N）；纯数字标题保留（上游车号直达语义），剥 id 后只剩纯数字亦回退
+- 搜索词清洗（服务端）：HTML 实体 → 双变体标题按中央数字段拆分取干净一半（`A-<id>-B`）→
+  数字 id 段（4~7 位；尾部与中部均覆盖）+ 重复段去重 → 噪声括号（汉化组/搬运/raw/翻译/DL版 等）→
+  卷话后缀；**最后剥掉全部括号留标题主体**——实测上游 /search 对带括号的长关键词失效
+  （返回默认排行列表），纯主体才可靠；剥后过短（<4 字符）回退、超 100 字符截断
+- **标题内嵌 aid**：爬虫落库的旧书标题大多内嵌 JM aid（如 `标题-262147-标题`），candidates
+  随行下发 `embeddedAid`，match 传 `aid` 即走**车号直达**（数字关键词触发上游 redirect_aid
+  单详情包装；要求结果恰好一条且 aid 一致，否则自动回退关键词搜索）
 - 上游纪律：`match`/`apply` 共用全局限速器，到上游的节奏恒 ≥1.2s/次
 
 ### 8.1 端点总览
@@ -892,7 +896,8 @@ go test ./internal/jm/ -run TestTagFavorite -v
       "libraryId": "lib-1",
       "title": "呑噬万物-125734",
       "author": "",
-      "searchKeyword": "呑噬万物"
+      "searchKeyword": "呑噬万物",
+      "embeddedAid": "125734"
     }
   ],
   "total": 1
@@ -903,27 +908,34 @@ go test ./internal/jm/ -run TestTagFavorite -v
 |---|---|---|
 | list[].id | string | Comic ID（apply 的 `comicId`） |
 | list[].searchKeyword | string | 服务端 `jmCleanSearchKeyword(title)` 结果；空串表示"无效"（前端要求手填） |
+| list[].embeddedAid | string | 标题内嵌的 JM aid（爬虫落库痕迹）；空串表示无，有值时 match 优先车号直达 |
 | total | int | = list.length |
 
-### 8.3 POST /api/jm/backfill/match — 搜索 + 打分
+### 8.3 POST /api/jm/backfill/match — 车号直达/搜索 + 打分
 
-**请求体** `{ "keyword": "呑噬万物", "title": "呑噬万物-125734", "author": "" }`
+**请求体** `{ "keyword": "呑噬万物", "aid": "125734", "title": "呑噬万物-125734", "author": "" }`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| keyword | string | ✅ | 1..100 字符（unicode 字符数），否则 422 |
+| keyword / aid | string | 二选一 | 都为空 → 422；keyword ≤100 字符否则 422 |
 | title / author | string | 否 | 本地标题/作者，参与打分（作者一致 +0.1） |
 
-**响应 data**：`{ "list": JmMatchItem[], "total", "keyword" }`，list 按 `score` 倒序，最多 8 条。
+**车号直达路径**（`aid` 非空且为纯数字）：数字关键词触发上游 redirect_aid 单详情包装；
+要求结果恰好一条且 aid 一致（车号无效时上游返回默认列表，不视为命中）→ 命中后标题相似度
+≥0.25 视为确定命中（score=1/high），不足则按原分定档（防"标题数字段撞无关车号"伪匹配）；
+落空自动回退关键词搜索。
+
+**响应 data**：`{ "list": JmMatchItem[], "total", "keyword", "viaAid" }`，list 按 `score` 倒序，最多 8 条。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | aid / title / author | string | JM 结果条目 |
 | tags | string[] | 搜索条目自带标签（normalizeJmTags 口径，上限 30），可能为空 |
-| score | float | 0~1：归一全等 1.0 / 互相包含 0.75 / 其余 CJK bigram Jaccard×0.7，作者一致 +0.1 |
+| score | float | 0~1：归一全等 1.0；互相包含且短串 ≥8 字符（详略两版）0.9 / 过短子串 0.75；bigram 子集 0.8；其余 Dice×0.7；作者一致 +0.1 |
 | confidence | string | `high`(≥0.85) / `medium`(≥0.65) / `low` |
+| viaAid | bool | true = 车号直达命中（aid 即权威匹配） |
 
-**错误**：`422 {"detail": "keyword 必填" | "keyword 过长(上限 100 字符)"}`；上游失败按 §0 错误包装。
+**错误**：`422 {"detail": "keyword 与 aid 至少提供其一" | "keyword 过长(上限 100 字符)"}`；上游失败按 §0 错误包装。
 
 ### 8.4 POST /api/jm/backfill/apply — 写入标签
 

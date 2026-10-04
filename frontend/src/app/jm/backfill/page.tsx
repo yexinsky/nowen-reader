@@ -155,6 +155,7 @@ function BackfillContent() {
       try {
         const data = await jmBackfillMatch({
           keyword: kw,
+          aid: row.candidate.embeddedAid || undefined,
           title: row.candidate.title,
           author: row.candidate.author || undefined,
         });
@@ -508,6 +509,11 @@ function BackfillRowCard({
           <div className="rounded-lg border border-border/70 bg-background/60 p-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <ConfidenceBadge confidence={top.confidence} />
+              {top.viaAid && (
+                <span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent">
+                  车号直达
+                </span>
+              )}
               <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={top.title}>
                 {top.title}
               </span>

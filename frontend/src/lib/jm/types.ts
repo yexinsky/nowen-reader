@@ -341,6 +341,8 @@ export interface JmBackfillCandidate {
   title: string;
   author: string;
   searchKeyword: string;
+  /** 标题内嵌的 JM aid(爬虫落库痕迹);有值时 match 优先车号直达 */
+  embeddedAid: string;
 }
 
 /** match 结果条目(score 0~1,confidence 由后端按阈值分档;list 已按 score 倒序) */
@@ -351,4 +353,6 @@ export interface JmBackfillMatch {
   tags: string[];
   score: number;
   confidence: "high" | "medium" | "low";
+  /** 车号直达命中(aid 即权威匹配,与标题相似度无关) */
+  viaAid: boolean;
 }

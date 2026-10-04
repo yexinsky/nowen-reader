@@ -30,15 +30,22 @@ import (
 /* ── 搜索词清洗 ── */
 
 // 旧书标题混有"漫画名-数字id"、卷话后缀、汉化组括号等噪声。清洗顺序:
-// 数字 id 段/重复段 → 噪声括号 → 卷话后缀 → 尾部 id,循环至稳定。
-// id 取 4~7 位:JM aid 实际 5~7 位,4 位起步会误杀"一拳超人 2"类短数字,
-// 故定 4~7;全角数字不处理(实测旧库不存在该形态)。
+// HTML 实体 → 中央 id 拆分(取较干净的一半) → 数字 id 段/重复段 → 噪声括号 →
+// 卷话后缀 → 尾部 id,循环至稳定;最后剥掉全部括号留标题主体。
+// 实测:上游 /search 对带括号的长关键词会失效(返回默认排行列表,total=10000),
+// 纯标题主体命中率最高。id 取 4~7 位:JM aid 实际 5~7 位,4 位起步会误杀
+// "一拳超人 2"类短数字;全角数字不处理(实测旧库不存在该形态)。
 var (
 	reBackfillNoiseBracket = regexp.MustCompile(
-		`(?i)[【\[(（][^】\])）]{0,40}?(?:汉化|漢化|group|中文|生肉|熟肉|无修|無修|raw|简体|繁體|繁体|搬运|搬運|转载|轉載|扫图|掃圖|嵌字|压制|潤色|润色)[^】\])）]{0,40}?[】\])）]`)
+		`(?i)[【\[(（][^】\])）]{0,40}?(?:汉化|漢化|group|中文|生肉|熟肉|无修|無修|raw|简体|繁體|繁体|搬运|搬運|转载|轉載|扫图|掃圖|嵌字|压制|潤色|润色|翻譯|翻訳|翻译|机翻|機翻|digital|カラー|color|generated|dl版|去码)[^】\])）]{0,40}?[】\])）]`)
 	reBackfillVolumeSuffix = regexp.MustCompile(
 		`(?:第\s*[0-9零一二三四五六七八九十百千两]+\s*[卷話巻话集章部季]|[Vv]ol(?:ume)?\.?\s*[0-9]+|[Cc]h(?:apter)?\.?\s*[0-9]+|\([0-9]{1,3}\))\s*$`)
 	reBackfillTailID = regexp.MustCompile(`[-–—_]\s*[0-9]{4,7}$`)
+	// 中央数字段:爬虫拼接的双变体标题 "变体A-<id>-变体B"(id 通常即 JM aid)
+	reBackfillCentralID = regexp.MustCompile(`^(.+)-[0-9]{4,7}-(.+)$`)
+	// 最内层括号组(迭代剥离实现嵌套支持)
+	reBackfillParen  = regexp.MustCompile(`[（(][^()（）]*[)）]`)
+	reBackfillSquare = regexp.MustCompile(`[【\[][^【\]【】]*[】\]]`)
 )
 
 // jmIsDigits 纯 ASCII 数字判断(数字 id 段只可能是 ASCII,与 len 语义一致)。
@@ -52,6 +59,38 @@ func jmIsDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// jmStripEntities 清理标题里的 HTML 实体(旧库实测含 "&amp;nbsp;")。
+func jmStripEntities(s string) string {
+	s = strings.ReplaceAll(s, "&amp;nbsp;", " ")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	return strings.ReplaceAll(s, "&amp;", " ")
+}
+
+// jmPickCleanerHalf 双变体标题 "A-<id>-B":两半是同一作品的不同详略版本
+// (通常一半带汉化组前缀),取更短的一半作为搜索基准;过短(<8 字符)时取另一半。
+// 两半皆为纯数字(如 "1234-5678")时放弃拆分——数字半边会被上游当车号误搜。
+func jmPickCleanerHalf(s string) string {
+	m := reBackfillCentralID.FindStringSubmatch(s)
+	if m == nil {
+		return s
+	}
+	left, right := strings.TrimSpace(m[1]), strings.TrimSpace(m[2])
+	if left == "" || right == "" {
+		return s
+	}
+	short, long := left, right
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	if len(short) < 8 {
+		short = long
+	}
+	if jmIsDigits(short) {
+		return s
+	}
+	return short
 }
 
 // jmStripIDSegments 处理连字符分隔形态的数字 id 与重复段(实测旧库存在
@@ -88,10 +127,34 @@ func jmStripIDSegments(s string) string {
 	return strings.Join(out, "-")
 }
 
-// jmCleanSearchKeyword 书库标题 → JM 搜索词。
+// jmExtractCoreTitle 剥掉全部括号组(嵌套由最内层优先迭代解决)留标题主体。
+// 结果过短(<4 字符,标题全在括号里)时返回空串,由调用方回退剥括号前的结果。
+func jmExtractCoreTitle(s string) string {
+	for i := 0; i < 8; i++ {
+		before := s
+		s = reBackfillParen.ReplaceAllString(s, " ")
+		s = reBackfillSquare.ReplaceAllString(s, " ")
+		if strings.TrimSpace(s) == before {
+			break
+		}
+		s = strings.TrimSpace(s)
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) < 4 {
+		return ""
+	}
+	if n := utf8.RuneCountInString(s); n > 100 {
+		r := []rune(s)
+		s = strings.TrimSpace(string(r[:100]))
+	}
+	return s
+}
+
+// jmCleanSearchKeyword 书库标题 → JM 搜索词(兜底路径;标题内嵌 aid 时优先车号直达)。
 // 纯数字标题(车号)原样保留:上游 /search 对纯数字走 redirect_aid 单详情直达。
 func jmCleanSearchKeyword(title string) string {
-	s := strings.TrimSpace(title)
+	s := jmStripEntities(strings.TrimSpace(title))
+	s = jmPickCleanerHalf(s)
 	for i := 0; i < 4; i++ {
 		before := s
 		s = jmStripIDSegments(s)
@@ -105,7 +168,34 @@ func jmCleanSearchKeyword(title string) string {
 			break
 		}
 	}
-	return strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.Fields(s), " ")
+	if core := jmExtractCoreTitle(s); core != "" {
+		return core // 剥括号后的主体(实测上游只对无括号短词可靠);全在括号里则回退
+	}
+	return s
+}
+
+/* ── 内嵌 aid 提取 ── */
+
+// 标题内嵌的 JM aid(爬虫落库痕迹,实测占旧库绝大多数):段边界为连字符/括号/
+// 首尾,5~7 位。命中即可走车号精确匹配,不再依赖标题相似度。4 位以下不取
+// (卷号/短数字误报)。如 "X-262147-Y"、"X-465577"(尾部)、"(...-1054639)-..."。
+var reBackfillEmbeddedAid = regexp.MustCompile(`[-–—_(](\d{5,7})[-–—_)]`)
+var reBackfillTailAid = regexp.MustCompile(`[-–—_](\d{5,7})$`)
+
+// jmExtractEmbeddedAid 返回标题内嵌的 JM aid;无则空串。
+func jmExtractEmbeddedAid(title string) string {
+	s := strings.TrimSpace(title)
+	if jmIsDigits(s) && len(s) >= 5 && len(s) <= 7 {
+		return s // 整个标题就是车号
+	}
+	if m := reBackfillEmbeddedAid.FindStringSubmatch(s); m != nil {
+		return m[1]
+	}
+	if m := reBackfillTailAid.FindStringSubmatch(s); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 /* ── 标题打分 ── */
@@ -113,11 +203,15 @@ func jmCleanSearchKeyword(title string) string {
 const (
 	jmMatchConfHigh   = 0.85
 	jmMatchConfMedium = 0.65
+	// 车号直达命中后,标题相似度须达到的最低分(防伪车号:标题里的数字段撞上
+	// 无关专辑的车号);达标视为确定命中(score=1/high),不达标按原分定档
+	jmAidMatchMinScore = 0.25
 )
 
-// jmNormForMatch 归一:小写 + 仅保留字母/数字等文字符(去空白与标点,
+// jmNormForMatch 归一:小写 + 仅保留字母/数字等文字符(去空白与标点与 HTML 实体,
 // CJK 字符按 Letter 保留)。
 func jmNormForMatch(s string) string {
+	s = jmStripEntities(s)
 	var b strings.Builder
 	for _, r := range s {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
@@ -137,9 +231,16 @@ func jmBigramSet(s string) map[string]struct{} {
 	return set
 }
 
-// jmScoreMatch 本地标题/作者 与 JM 结果的匹配置信分(0~1):
-// 归一全等 1.0;互相包含 0.75;其余 CJK 字符 bigram Jaccard × 0.7;
-// 双方作者非空且一致 +0.1(仅在已有标题分之上,无标题分不加)。
+// jmScoreMatch 本地标题/作者 与 JM 结果的匹配置信分(0~1)。
+// 实测旧库标题普遍是"爬虫噪声超集"(汉化组括号/标签/双变体),与 JM 原版标题
+// 互不包含,原先一律落入 bigram Jaccard 被长短悬殊稀释成低分——这正是大量
+// "正确匹配却低置信"的成因。口径改为分档:
+//   - 归一全等 → 1.0;
+//   - 互相包含:短串 ≥8 字符(同一作品的详略两版,证据极强)→ 0.9;
+//     过短子串(卷号撞系列名)→ 0.75;
+//   - bigram 子集:一侧 bigram 几乎全部出现在另一侧(轻微删改的变体)→ 0.8;
+//   - 其余 Dice 系数 × 0.7(比 Jaccard 对长短悬殊宽容);
+//   - 双方作者非空且一致 +0.1(仅在已有标题分之上)。
 func jmScoreMatch(localTitle, localAuthor, remoteTitle, remoteAuthor string) float64 {
 	lt, rt := jmNormForMatch(localTitle), jmNormForMatch(remoteTitle)
 	if lt == "" || rt == "" {
@@ -150,7 +251,15 @@ func jmScoreMatch(localTitle, localAuthor, remoteTitle, remoteAuthor string) flo
 	case lt == rt:
 		score = 1
 	case strings.Contains(lt, rt) || strings.Contains(rt, lt):
-		score = 0.75
+		short, long := lt, rt
+		if len(short) > len(long) {
+			short, long = long, short
+		}
+		if utf8.RuneCountInString(short) >= 8 {
+			score = 0.9
+		} else {
+			score = 0.75
+		}
 	default:
 		lb, rb := jmBigramSet(lt), jmBigramSet(rt)
 		inter := 0
@@ -159,8 +268,21 @@ func jmScoreMatch(localTitle, localAuthor, remoteTitle, remoteAuthor string) flo
 				inter++
 			}
 		}
-		if union := len(lb) + len(rb) - inter; union > 0 {
-			score = 0.7 * float64(inter) / float64(union)
+		small, big := lb, rb
+		if len(small) > len(big) {
+			small, big = big, small
+		}
+		contained := 0
+		for g := range small {
+			if _, ok := big[g]; ok {
+				contained++
+			}
+		}
+		switch {
+		case len(small) >= 4 && contained == len(small):
+			score = 0.8
+		case len(lb)+len(rb) > 0:
+			score = 0.7 * 2 * float64(inter) / float64(len(lb)+len(rb))
 		}
 	}
 	if la, ra := jmNormForMatch(localAuthor), jmNormForMatch(remoteAuthor); score > 0 &&
@@ -242,29 +364,76 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 				"title":         it.Title,
 				"author":        it.Author,
 				"searchKeyword": jmCleanSearchKeyword(it.Title),
+				"embeddedAid":   jmExtractEmbeddedAid(it.Title),
 			})
 		}
 		jmOK(c, gin.H{"list": items, "total": len(items)})
 	})
 
-	// POST /backfill/match — 关键词全站搜索第 1 页,按本地标题/作者打分排序(不改库)
+	// POST /backfill/match — 标题内嵌 aid 时优先车号直达(精确命中,标题相似度仅防
+	// 伪车号);无 aid 或车号落空 → 关键词全站搜索第 1 页,按本地标题/作者打分排序
+	// (不改库)
 	g.POST("/backfill/match", func(c *gin.Context) {
 		var body struct {
 			Keyword string `json:"keyword"`
+			Aid     string `json:"aid"`
 			Title   string `json:"title"`
 			Author  string `json:"author"`
 		}
-		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Keyword) == "" {
-			jmContent422(c, "keyword 必填")
+		if err := c.ShouldBindJSON(&body); err != nil {
+			jmContent422(c, "参数不合法")
 			return
 		}
+		body.Aid = strings.TrimSpace(body.Aid)
 		keyword := strings.TrimSpace(body.Keyword)
+		if body.Aid == "" && keyword == "" {
+			jmContent422(c, "keyword 与 aid 至少提供其一")
+			return
+		}
 		if utf8.RuneCountInString(keyword) > 100 {
 			jmContent422(c, "keyword 过长(上限 100 字符)")
 			return
 		}
+		cl := jmService().AnonClient()
+
+		// 车号直达:数字关键词触发上游 redirect_aid 单详情包装;要求结果恰好一条且
+		// aid 一致(车号无效时上游返回默认列表,不得当作命中)。
+		if body.Aid != "" && jmIsDigits(body.Aid) {
+			jmBackfillThrottle()
+			data, err := cl.ComicsSearch(c.Request.Context(), jm.SearchParams{Keyword: body.Aid, Page: 1})
+			if err != nil {
+				jmFailErr(c, err, "JM 搜索失败")
+				return
+			}
+			res, _ := data.(map[string]any)
+			rawList, _ := res["list"].([]any)
+			if len(rawList) == 1 {
+				if meta, ok := jm.ExtractComicItemMeta(rawList[0]); ok && meta.Aid == body.Aid {
+					score := jmScoreMatch(body.Title, body.Author, meta.Title, meta.Author)
+					item := jmMatchItem{
+						Aid: meta.Aid, Title: meta.Title, Author: meta.Author,
+						Tags: meta.Tags, Score: score, ViaAid: true,
+					}
+					if score >= jmAidMatchMinScore {
+						// aid 即权威匹配;相似度过关则视为确定命中
+						item.Score = 1
+						item.Confidence = "high"
+					} else {
+						item.Confidence = jmMatchConfidence(score)
+					}
+					jmOK(c, gin.H{"list": []jmMatchItem{item}, "total": 1, "keyword": body.Aid, "viaAid": true})
+					return
+				}
+			}
+			if keyword == "" {
+				// 车号落空且无兜底关键词
+				jmOK(c, gin.H{"list": []jmMatchItem{}, "total": 0, "keyword": body.Aid, "viaAid": false})
+				return
+			}
+		}
+
 		jmBackfillThrottle()
-		data, err := jmService().AnonClient().ComicsSearch(c.Request.Context(), jm.SearchParams{
+		data, err := cl.ComicsSearch(c.Request.Context(), jm.SearchParams{
 			Keyword: keyword,
 			Page:    1,
 		})
@@ -296,7 +465,7 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 		for i := range matches {
 			matches[i].Confidence = jmMatchConfidence(matches[i].Score)
 		}
-		jmOK(c, gin.H{"list": matches, "total": len(matches), "keyword": keyword})
+		jmOK(c, gin.H{"list": matches, "total": len(matches), "keyword": keyword, "viaAid": false})
 	})
 
 	// POST /backfill/apply — 后端自行拉详情取标签(不信任客户端透传),
@@ -361,4 +530,6 @@ type jmMatchItem struct {
 	Tags       []string `json:"tags"`
 	Score      float64  `json:"score"`
 	Confidence string   `json:"confidence"`
+	// ViaAid=true 表示按标题内嵌车号直达命中(aid 即权威匹配,与标题相似度无关)
+	ViaAid bool `json:"viaAid"`
 }
