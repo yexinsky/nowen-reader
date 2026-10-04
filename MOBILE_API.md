@@ -1014,3 +1014,87 @@ go test ./internal/handler -run "TestJmCleanSearchKeyword|TestJmScoreMatch|TestJ
 # 无标签/改名候选查询 + titleSortKey 重算单测
 go test ./internal/store -run "TestGetUntaggedComics|TestListTitleBackfillCandidates|TestTitleSortKeyUpdatedWithComicTitle" -v
 ```
+
+## 9. 私有扩展：标签情景（`/api/tags/scenarios`，仅内置 Go 服务实现）
+
+给标签本身建「情景」维度（如 剧情/身体/服装/画风/工具），书库筛选面板按情景分组展示。
+情景是**标签级**新维度，与作品级「Category 分类」相互独立；情景支持手动创建/编辑/删除/排序，
+标签支持手动分配与 AI 分配（只允许归入**已有**情景，不新增）。
+
+- 数据模型：`TagScenario` 表（name 唯一、color、sortOrder）+ `Tag.scenarioId`（迁移 v45）；
+  删除情景时标签的 `scenarioId` 落回 NULL（外键 SET NULL），标签本体不受影响
+- 权限：读取需登录（同 `/api/tags`），创建/编辑/删除/分配需管理员
+
+### 9.1 端点总览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/tags/scenarios` | 情景分组清单 + 未分配标签（含 comicCount） 🔒 |
+| POST | `/api/tags/scenarios` | 新建情景 🔒管理员 |
+| PUT | `/api/tags/scenarios/:id` | 编辑情景（name/color/sortOrder，字段缺省不改） 🔒管理员 |
+| DELETE | `/api/tags/scenarios/:id` | 删除情景（标签回未分配） 🔒管理员 |
+| POST | `/api/tags/scenarios/assign` | 批量设置标签情景 🔒管理员 |
+| POST | `/api/ai/assign-tag-scenarios` | AI 为标签分配情景（直接写库） 🔒需 AI 权限 |
+
+### 9.2 GET /api/tags/scenarios — 分组清单
+
+**响应**
+
+```json
+{
+  "list": [
+    {
+      "id": 1, "name": "剧情", "color": "#6366f1", "sortOrder": 0,
+      "tags": [ { "id": 3, "name": "剧情向", "comicCount": 12 } ]
+    }
+  ],
+  "unassigned": { "tags": [ { "id": 9, "name": "BBD", "comicCount": 4 } ] }
+}
+```
+
+- `list` 按 `sortOrder ASC, id ASC`；组内 `tags` 与 `unassigned.tags` 按 `name ASC`
+- `comicCount` = 该标签关联的 Comic 数（LEFT JOIN ComicTag 计数，未挂书为 0）
+- `unassigned` = `scenarioId IS NULL` 的全部标签
+
+### 9.3 写端点（创建/编辑/删除/分配）
+
+**POST /api/tags/scenarios** 请求体 `{ "name": "剧情", "color": "#6366f1" }`（color 可选）→ `{"ok":true,"id":7}`。
+`name` trim 后非空且 ≤50 字符，否则 **422**；重名（唯一索引）→ **422**。
+
+**PUT /api/tags/scenarios/7** 请求体 `{ "name"?, "color"?, "sortOrder"? }` → `{"ok":true}`；字段缺省不修改；
+重名 → **422**；情景不存在 → **404**。
+
+**DELETE /api/tags/scenarios/7** → `{"ok":true}`；标签 `scenarioId` 落回 NULL；不存在 → **404**。
+
+**POST /api/tags/scenarios/assign** 请求体 `{ "tagIds": [3, 9], "scenarioId": 7 }`
+（`scenarioId` 传 `null` = 移出情景）→ `{"ok":true,"assigned":2}`（assigned = 去重后实际写入数）。
+`tagIds` 去重；含不存在的 tagId 或情景不存在 → **404**（不部分写入）。
+
+### 9.4 POST /api/ai/assign-tag-scenarios — AI 分配
+
+**请求体** `{ "onlyUnassigned": true }`（缺省 true；false = 对全部标签重新分配）。
+
+**响应**
+
+```json
+{
+  "assignments": [ { "tagId": 3, "tagName": "汉化", "scenarioId": 7, "scenarioName": "工具" } ],
+  "skipped": [ "BBD", "巨乳" ]
+}
+```
+
+- 语义：把现有情景名清单 + 标签名清单单次调用 LLM，要求为每个标签从情景清单中选一个或跳过；
+  **只允许已有情景，不新增**；返回的情景名做**严格匹配**（完全相等才采用，模糊/不存在的进 `skipped`）
+- 结果直接写入 `Tag.scenarioId`（分配低风险可逆）；`assignments` 只含实际写入的条目，
+  `skipped` 为未写入的标签名（AI 跳过或匹配失败）
+- 错误：未配置 AI → **422**（明确文案）；无任何情景 → **422** `"请先创建情景"`；
+  标签量为 0 → **200** 空结果（不调用 LLM）；LLM 调用失败 → **500**
+
+### 9.5 测试
+
+```bash
+# 情景 CRUD/分配/列表单测
+go test ./internal/store -run "TagScenario" -count=1 -v
+# 端点参数校验 + AI 门控/严格匹配（mock LLM）单测
+go test ./internal/handler -run "TagScenario" -count=1 -v
+```

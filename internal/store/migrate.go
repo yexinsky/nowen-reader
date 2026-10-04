@@ -535,6 +535,24 @@ var Migrations = []Migration{
 			);`,
 		}, "\n"),
 	},
+	{
+		Version:     45,
+		Description: "Add TagScenario table and Tag.scenarioId for tag scenario classification",
+		SQL: strings.Join([]string{
+			// 标签情景（如 剧情/身体/服装/画风/工具），标签级维度，与 Comic 级 Category 无关
+			`CREATE TABLE IF NOT EXISTS "TagScenario" (
+				"id"        INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+				"name"      TEXT NOT NULL,
+				"color"     TEXT NOT NULL DEFAULT '',
+				"sortOrder" INTEGER NOT NULL DEFAULT 0,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS "TagScenario_name_key" ON "TagScenario"("name");`,
+			// 标签挂到情景；删除情景时标签回到未分配
+			`ALTER TABLE "Tag" ADD COLUMN "scenarioId" INTEGER REFERENCES "TagScenario"("id") ON DELETE SET NULL;`,
+			`CREATE INDEX IF NOT EXISTS "Tag_scenarioId_idx" ON "Tag"("scenarioId");`,
+		}, "\n"),
+	},
 }
 
 // ensureMigrationsTable creates the migrations tracking table.

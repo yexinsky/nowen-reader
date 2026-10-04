@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+### Added (feat/tag-scenarios 标签情景分类)
+
+- 标签级「情景」维度(迁移 v45:TagScenario 表 + Tag.scenarioId,删除情景 SET NULL 回未分配;与 Comic 级 Category 体系无关):书库筛选标签时可按情景分组快速定位
+- 端点:`/api/tags/scenarios` 增删改查(读=登录/写=admin,重名 422)、`POST /api/tags/scenarios/assign` 批量分配/移出(事务,404 校验);list 返回各情景成员标签(comicCount)与未分配集合
+- AI 分配:`POST /api/ai/assign-tag-scenarios`(AI 门控与现有 AI 端点一致):单次 LLM 调用,只允许分配到已有情景、名字严格相等才写库,其余进 skipped;未配置 AI/无情景 422
+- 前端:标签与分类页新增「情景」tab(卡片增删改/排序/改色、成员 chips 移出、添加标签 datalist、未分配标签多选批量分配、AI 分配按钮);书库标签筛选大面板按情景分组(色点组头+成员数,未分配置底,搜索跨组,不传情景时行为与现状一致)
+- i18n:zh-CN/en 全量新 key
 ### Removed (feat/remove-legacy-merge 移除旧标签合并功能)
 
 - 移除 `POST /api/tags/merge` 端点与标签管理页的「合并」按钮/弹窗:能力被归一工作台「归并」完整覆盖(合并 + 写别名 + 操作日志 + 撤销);旧路径不写别名(归并后源名会重新长出)、不可撤销、非事务且错误吞掉,属绕过归一的后门(审查发现项)

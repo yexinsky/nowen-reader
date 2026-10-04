@@ -89,6 +89,7 @@ const zhCN = {
     selectedGroup: "已选",
     noMatch: "没有匹配的标签",
     moreHidden: "为保持流畅，仅显示前 {n} 个标签，请用搜索缩小范围",
+    unassigned: "未分配",
   },
 
 
@@ -1400,6 +1401,35 @@ autoDetect: "智能合集",
       aliasDeleteSuccess: "已删除别名",
       loadFailed: "加载失败",
     },
+    // 情景分类
+    scenario: {
+      tab: "情景",
+      createScenario: "新建情景",
+      scenarioNamePlaceholder: "输入情景名称...",
+      editColor: "修改颜色",
+      addTagPlaceholder: "输入已有标签名，回车分配...",
+      addTag: "添加标签",
+      tagNotFound: "未找到该标签",
+      removeTag: "移出情景",
+      moveUp: "上移",
+      moveDown: "下移",
+      confirmDeleteScenario: "确认删除情景",
+      deleteWarning: "该情景内的标签将回到未分配。",
+      unassignedSection: "未分配标签",
+      unassignedEmpty: "所有标签均已分配情景",
+      assignTo: "分配到",
+      assign: "分配",
+      pickScenario: "选择情景",
+      assignedDone: "已分配 {n} 个标签",
+      aiAssign: "AI 分配情景",
+      aiAssignRunning: "AI 分配中...",
+      aiAssignConfirm: "将调用 AI 为 {n} 个未分配标签分配情景（仅使用已有情景）",
+      aiAssignDone: "分配 {m} 个，跳过 {k} 个",
+      empty: "暂无情景",
+      created: "情景已创建",
+      saved: "已保存",
+      deleted: "情景已删除",
+    },
   },
 } satisfies Translations;
 
@@ -1489,6 +1519,7 @@ export interface Translations {
     selectedGroup: string;
     noMatch: string;
     moreHidden: string;
+    unassigned: string;
   };
   categoryFilter: {
     label: string;
@@ -2717,6 +2748,35 @@ export interface Translations {
       unignoreSuccess: string;
       aliasDeleteSuccess: string;
       loadFailed: string;
+    };
+    // Scenarios
+    scenario: {
+      tab: string;
+      createScenario: string;
+      scenarioNamePlaceholder: string;
+      editColor: string;
+      addTagPlaceholder: string;
+      addTag: string;
+      tagNotFound: string;
+      removeTag: string;
+      moveUp: string;
+      moveDown: string;
+      confirmDeleteScenario: string;
+      deleteWarning: string;
+      unassignedSection: string;
+      unassignedEmpty: string;
+      assignTo: string;
+      assign: string;
+      pickScenario: string;
+      assignedDone: string;
+      aiAssign: string;
+      aiAssignRunning: string;
+      aiAssignConfirm: string;
+      aiAssignDone: string;
+      empty: string;
+      created: string;
+      saved: string;
+      deleted: string;
     };
   };
 }

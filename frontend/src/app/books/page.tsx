@@ -34,6 +34,7 @@ import { useAIStatus } from "@/hooks/useAIStatus";
 import { createGroup } from "@/api/groups";
 import { toggleComicFavorite, deleteComicById } from "@/api/comics";
 import { fetchLibraries, fetchAccessibleLibraries, type Library } from "@/api/libraries";
+import { fetchTagScenarios, type TagScenarioGroup } from "@/api/tags";
 import { useAuth } from "@/lib/auth-context";
 import { calculateStoredReadingProgress } from "@/lib/progress";
 import { seriesIdFromShelfId } from "@/lib/series-id";
@@ -470,6 +471,22 @@ export default function BooksPage() {
 
   // Extract all unique tags — fetch from API once on mount (not on every apiComics change)
   const [allTags, setAllTags] = useState<string[]>([]);
+  // 标签情景分组（TagFilter 大面板按情景分组；为空时 TagFilter 保持现状）
+  const [scenarioGroups, setScenarioGroups] = useState<TagScenarioGroup[]>([]);
+  const fetchScenarios = useCallback(() => {
+    fetchTagScenarios()
+      .then((data) => {
+        setScenarioGroups(
+          data.list.map((s) => ({
+            id: s.id,
+            name: s.name,
+            color: s.color,
+            tags: s.tags.map((tg) => tg.name),
+          }))
+        );
+      })
+      .catch(() => {});
+  }, []);
   const fetchTags = useCallback(() => {
     fetch(apiPath("/api/tags"))
       .then((r) => r.json())
@@ -483,7 +500,8 @@ export default function BooksPage() {
   }, []);
   useEffect(() => {
     fetchTags();
-  }, [fetchTags]);
+    fetchScenarios();
+  }, [fetchTags, fetchScenarios]);
 
   // Filter comics (server-side filtering is primary)
   const filteredComics = useMemo(() => {
@@ -1177,6 +1195,7 @@ export default function BooksPage() {
             <div className="mt-1.5">
               <TagFilter
                 allTags={allTags}
+                scenarios={scenarioGroups}
                 selectedTags={selectedTags}
                 onTagToggle={handleTagToggle}
                 onClearAll={() => setSelectedTags([])}
@@ -1184,6 +1203,7 @@ export default function BooksPage() {
                   refetch();
                   // Refresh global tags after translation
                   fetchTags();
+                  fetchScenarios();
                 }}
               />
             </div>

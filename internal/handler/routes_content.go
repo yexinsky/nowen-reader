@@ -55,6 +55,24 @@ func registerContentRoutes(api *gin.RouterGroup) {
 		aliasesAdmin.DELETE("", tag.DeleteTagAlias)
 	}
 
+	// 标签情景（读取与现有 tags 一致需登录，写操作需管理员）
+	// ============================================================
+	scenario := NewTagScenarioHandler()
+	scenarioRead := api.Group("/tags/scenarios")
+	scenarioRead.Use(middleware.AuthRequired())
+	{
+		scenarioRead.GET("", scenario.List)
+	}
+
+	scenarioAdmin := api.Group("/tags/scenarios")
+	scenarioAdmin.Use(middleware.AdminRequired())
+	{
+		scenarioAdmin.POST("", scenario.Create)
+		scenarioAdmin.PUT("/:id", scenario.Update)
+		scenarioAdmin.DELETE("/:id", scenario.Delete)
+		scenarioAdmin.POST("/assign", scenario.Assign)
+	}
+
 	// ============================================================
 	// Categories (Phase 2)
 	// ============================================================

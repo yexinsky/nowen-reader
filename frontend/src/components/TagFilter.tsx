@@ -4,6 +4,9 @@ import { apiPath } from "@/lib/base-path";
 import { useState, useCallback, useMemo, useRef } from "react";
 import { Tag, ChevronRight, Languages, Search, X } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
+import type { TagScenarioGroup } from "@/api/tags";
+
+export type { TagScenarioGroup };
 
 interface TagFilterProps {
   allTags: string[];
@@ -11,6 +14,8 @@ interface TagFilterProps {
   onTagToggle: (tag: string) => void;
   onClearAll: () => void;
   onTagsTranslated?: () => void;
+  /** 可选：按情景分组渲染（仅大面板展开模式生效；缺省/为空时行为与现状完全一致） */
+  scenarios?: TagScenarioGroup[];
 }
 
 const tagColorMap: Record<string, string> = {
@@ -52,6 +57,7 @@ export default function TagFilter({
   onTagToggle,
   onClearAll,
   onTagsTranslated,
+  scenarios,
 }: TagFilterProps) {
   const t = useTranslation();
   const { locale } = useLocale();
@@ -108,6 +114,55 @@ export default function TagFilter({
       hiddenCount: Math.max(0, rest.length - RENDER_LIMIT),
     };
   }, [allTags, selectedTags, query]);
+
+  // 情景分组（仅大面板展开模式；未传 scenarios / 标签数不超过折叠阈值时为 null，保持现状）
+  const groupedSections = useMemo(() => {
+    if (!scenarios || scenarios.length === 0 || allTags.length <= FOLD_THRESHOLD) return null;
+    const selectedSet = new Set(selectedTags);
+    const q = query.trim().toLowerCase();
+    const matches = (tag: string) => !q || tag.toLowerCase().includes(q);
+    const allSet = new Set(allTags);
+    const assignedSet = new Set<string>();
+
+    const groups = scenarios
+      .map((s) => {
+        const members = s.tags.filter((tg) => allSet.has(tg));
+        members.forEach((tg) => assignedSet.add(tg));
+        return {
+          id: s.id,
+          name: s.name,
+          color: s.color,
+          total: members.length,
+          rest: members.filter((tg) => !selectedSet.has(tg) && matches(tg)),
+        };
+      })
+      .filter((g) => g.total > 0 && (g.rest.length > 0 || !q));
+
+    const unassignedRest = allTags.filter(
+      (tg) => !assignedSet.has(tg) && !selectedSet.has(tg) && matches(tg)
+    );
+
+    // 渲染上限跨全组共享：未分配组置底，超出上限的部分靠搜索过滤
+    const totalRest = groups.reduce((n, g) => n + g.rest.length, 0) + unassignedRest.length;
+    let remaining = RENDER_LIMIT;
+    const sections: Array<{ id: number | "unassigned"; name: string; color?: string; total: number; tags: string[] }> = [];
+    for (const g of groups) {
+      const slice = g.rest.slice(0, Math.max(0, remaining));
+      remaining -= slice.length;
+      if (slice.length === 0) continue;
+      sections.push({ id: g.id, name: g.name, color: g.color, total: g.total, tags: slice });
+    }
+    const unassignedSlice = unassignedRest.slice(0, Math.max(0, remaining));
+    if (unassignedSlice.length > 0) {
+      sections.push({
+        id: "unassigned",
+        name: t.tagFilter.unassigned,
+        total: unassignedRest.length,
+        tags: unassignedSlice,
+      });
+    }
+    return { sections, totalRest, hiddenCount: Math.max(0, totalRest - RENDER_LIMIT) };
+  }, [scenarios, allTags, selectedTags, query, t]);
 
   const renderTagButton = (tag: string, active: boolean) => (
     <button
@@ -249,16 +304,51 @@ export default function TagFilter({
               className="flex flex-wrap items-start gap-2 overflow-y-auto overscroll-contain p-0.5 max-h-[min(55vh,440px)]"
               style={{ scrollbarWidth: "thin" }}
             >
-              {restTags.length === 0 && selectedTags.length === 0 ? (
-                <span className="py-3 text-xs text-muted/60 italic">{t.tagFilter.noMatch}</span>
+              {groupedSections ? (
+                /* 情景分组模式：每组一个组头（色点 + 名称 + 成员数），未分配组置底 */
+                <>
+                  {groupedSections.sections.length === 0 && selectedTags.length === 0 ? (
+                    <span className="py-3 text-xs text-muted/60 italic">{t.tagFilter.noMatch}</span>
+                  ) : (
+                    groupedSections.sections.map((section) => (
+                      <div key={section.id} className="w-full space-y-1.5">
+                        <div className="flex items-center gap-1.5 pt-0.5">
+                          {section.color && (
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10 dark:ring-white/20"
+                              style={{ backgroundColor: section.color }}
+                            />
+                          )}
+                          <span className="text-[11px] font-semibold text-muted">{section.name}</span>
+                          <span className="text-[10px] text-muted/60">{section.total}</span>
+                          <span className="h-px flex-1 bg-border/30" />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {section.tags.map((tag) => renderTagButton(tag, false))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {groupedSections.hiddenCount > 0 && (
+                    <span className="w-full py-1 text-center text-[11px] text-muted/60">
+                      {t.tagFilter.moreHidden.replace("{n}", String(Math.min(RENDER_LIMIT, groupedSections.totalRest)))}
+                    </span>
+                  )}
+                </>
               ) : (
-                restTags.map((tag) => renderTagButton(tag, false))
-              )}
+                <>
+                  {restTags.length === 0 && selectedTags.length === 0 ? (
+                    <span className="py-3 text-xs text-muted/60 italic">{t.tagFilter.noMatch}</span>
+                  ) : (
+                    restTags.map((tag) => renderTagButton(tag, false))
+                  )}
 
-              {hiddenCount > 0 && (
-                <span className="w-full py-1 text-center text-[11px] text-muted/60">
-                  {t.tagFilter.moreHidden.replace("{n}", String(restTags.length))}
-                </span>
+                  {hiddenCount > 0 && (
+                    <span className="w-full py-1 text-center text-[11px] text-muted/60">
+                      {t.tagFilter.moreHidden.replace("{n}", String(restTags.length))}
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>

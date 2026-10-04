@@ -84,6 +84,7 @@ func registerMetadataRoutes(api *gin.RouterGroup) {
 		aiUse.POST("/batch-suggest-category", ai.BatchSuggestCategory)
 		aiUse.POST("/verify-duplicates", ai.VerifyDuplicates)
 		aiUse.POST("/recommend-goal", ai.RecommendGoal)
+		aiUse.POST("/assign-tag-scenarios", ai.AssignTagScenarios)
 	}
 
 	// AI per-comic features — require AI access

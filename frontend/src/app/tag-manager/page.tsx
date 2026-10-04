@@ -26,11 +26,22 @@ import {
   GripVertical,
   Brain,
   Wand2,
+  Clapperboard,
 } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { TagNormalizationPanel } from "@/components/TagNormalizationPanel";
+import {
+  fetchTagScenarios,
+  createTagScenario,
+  updateTagScenario,
+  deleteTagScenario,
+  assignTagsToScenario,
+  aiAssignTagScenarios,
+  type TagScenario,
+  type TagScenarioTag,
+} from "@/api/tags";
 
 interface TagItem {
   id: number;
@@ -244,6 +255,9 @@ const COLOR_PRESETS = [
   "#3b82f6", "#8b5cf6", "#ec4899", "#6b7280", "#14b8a6",
 ];
 
+// 未分配标签区最多渲染的 chips 数（其余靠搜索过滤）
+const UNASSIGNED_RENDER_LIMIT = 300;
+
 type SortField = "name" | "count";
 type SortDir = "asc" | "desc";
 
@@ -254,9 +268,11 @@ export default function TagManagerPage() {
   const { user, loading: authLoading } = useAuth();
   const isAdmin = user?.role === "admin";
 
-  const [activeTab, setActiveTab] = useState<"tags" | "categories">("tags");
+  const [activeTab, setActiveTab] = useState<"tags" | "categories" | "scenarios">("tags");
   const [tags, setTags] = useState<TagItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [scenarios, setScenarios] = useState<TagScenario[]>([]);
+  const [unassignedTags, setUnassignedTags] = useState<TagScenarioTag[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -301,6 +317,17 @@ export default function TagManagerPage() {
   const [editCatIcon, setEditCatIcon] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
+  // Scenario editing & selection states（情景分类）
+  const [editingScenarioId, setEditingScenarioId] = useState<number | null>(null);
+  const [editScenarioName, setEditScenarioName] = useState("");
+  const [showNewScenarioInput, setShowNewScenarioInput] = useState(false);
+  const [newScenarioName, setNewScenarioName] = useState("");
+  const [newScenarioColor, setNewScenarioColor] = useState("#6366f1");
+  const [selectedUnassigned, setSelectedUnassigned] = useState<Set<number>>(new Set());
+  const [assignTargetId, setAssignTargetId] = useState("");
+  const [scenarioTagInputs, setScenarioTagInputs] = useState<Record<number, string>>({});
+  const [aiAssigning, setAiAssigning] = useState(false);
+
   // Batch operation loading
   const [batchLoading, setBatchLoading] = useState(false);
 
@@ -326,9 +353,15 @@ export default function TagManagerPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [tagsData, catsData] = await Promise.all([fetchTags(), fetchCategories()]);
+    const [tagsData, catsData, scenarioData] = await Promise.all([
+      fetchTags(),
+      fetchCategories(),
+      fetchTagScenarios(),
+    ]);
     setTags(tagsData);
     setCategories(catsData);
+    setScenarios(scenarioData.list);
+    setUnassignedTags(scenarioData.unassigned.tags);
     setLoading(false);
   }, []);
 
@@ -371,6 +404,33 @@ export default function TagManagerPage() {
     );
     return sortItems(filtered);
   }, [categories, search, sortItems]);
+
+  // ── Scenario derived data（情景） ──
+
+  const sortedScenarios = useMemo(
+    () => [...scenarios].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+    [scenarios]
+  );
+
+  const filteredScenarios = useMemo(() => {
+    const q = search.toLowerCase();
+    if (!q) return sortedScenarios;
+    return sortedScenarios.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.tags.some((tg) => tg.name.toLowerCase().includes(q))
+    );
+  }, [sortedScenarios, search]);
+
+  const filteredUnassigned = useMemo(() => {
+    const q = search.toLowerCase();
+    return unassignedTags.filter((tg) => !q || tg.name.toLowerCase().includes(q));
+  }, [unassignedTags, search]);
+
+  const visibleUnassigned = useMemo(
+    () => filteredUnassigned.slice(0, UNASSIGNED_RENDER_LIMIT),
+    [filteredUnassigned]
+  );
+
+  const hiddenUnassignedCount = Math.max(0, filteredUnassigned.length - UNASSIGNED_RENDER_LIMIT);
 
   // ── Pagination logic ──
 
@@ -790,6 +850,170 @@ export default function TagManagerPage() {
     }
   };
 
+  // ── 情景（Scenario）actions ──
+
+  const scenarioSc = t.tagManager?.scenario;
+
+  const handleCreateScenario = async () => {
+    if (!newScenarioName.trim()) return;
+    const result = await createTagScenario(newScenarioName.trim(), newScenarioColor);
+    if (result.ok) {
+      showToast(scenarioSc?.created || "情景已创建", "success");
+      setNewScenarioName("");
+      setShowNewScenarioInput(false);
+      await loadData();
+    } else {
+      showToast(result.error || "创建失败", "error");
+    }
+  };
+
+  const handleSaveScenarioName = async (id: number) => {
+    const name = editScenarioName.trim();
+    if (!name) {
+      setEditingScenarioId(null);
+      return;
+    }
+    const original = scenarios.find((s) => s.id === id);
+    if (original && name === original.name) {
+      setEditingScenarioId(null);
+      return;
+    }
+    const result = await updateTagScenario(id, { name });
+    setEditingScenarioId(null);
+    if (result.ok) {
+      showToast(scenarioSc?.saved || "已保存", "success");
+      await loadData();
+    } else {
+      showToast(result.error || "操作失败", "error");
+    }
+  };
+
+  const handleScenarioColorChange = async (id: number, color: string) => {
+    const result = await updateTagScenario(id, { color });
+    if (result.ok) {
+      await loadData();
+    } else {
+      showToast(result.error || "操作失败", "error");
+    }
+  };
+
+  const handleDeleteScenario = (id: number) => {
+    const sc = scenarios.find((s) => s.id === id);
+    setConfirmAction({
+      title: scenarioSc?.confirmDeleteScenario || "确认删除情景",
+      message: `${scenarioSc?.confirmDeleteScenario || "确认删除情景"} "${sc?.name || id}"？${scenarioSc?.deleteWarning || "该情景内的标签将回到未分配。"}`,
+      onConfirm: async () => {
+        setConfirmAction(null);
+        const result = await deleteTagScenario(id);
+        if (result.ok) {
+          showToast(scenarioSc?.deleted || "情景已删除", "success");
+          setSelectedUnassigned(new Set());
+          await loadData();
+        } else {
+          showToast(result.error || "操作失败", "error");
+        }
+      },
+    });
+  };
+
+  const handleMoveScenario = async (id: number, dir: -1 | 1) => {
+    const sorted = sortedScenarios;
+    const idx = sorted.findIndex((s) => s.id === id);
+    const targetIdx = idx + dir;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= sorted.length) return;
+    const a = sorted[idx];
+    const b = sorted[targetIdx];
+    const result = await updateTagScenario(a.id, { sortOrder: b.sortOrder ?? targetIdx });
+    if (result.ok) {
+      const result2 = await updateTagScenario(b.id, { sortOrder: a.sortOrder ?? idx });
+      if (result2.ok) {
+        await loadData();
+      } else {
+        showToast(result2.error || "排序失败", "error");
+      }
+    } else {
+      showToast(result.error || "排序失败", "error");
+    }
+  };
+
+  const handleAssignTags = async (tagIds: number[], scenarioId: number | null) => {
+    if (tagIds.length === 0) return;
+    const result = await assignTagsToScenario(tagIds, scenarioId);
+    if (result.ok) {
+      showToast(
+        (scenarioSc?.assignedDone || "已分配 {n} 个标签").replace(
+          "{n}",
+          String(result.data?.assigned ?? tagIds.length)
+        ),
+        "success"
+      );
+      setSelectedUnassigned(new Set());
+      await loadData();
+    } else {
+      showToast(result.error || "操作失败", "error");
+    }
+  };
+
+  const handleBatchAssignUnassigned = async () => {
+    if (selectedUnassigned.size === 0 || !assignTargetId) return;
+    await handleAssignTags([...selectedUnassigned], Number(assignTargetId));
+    setAssignTargetId("");
+  };
+
+  /** 卡片内「添加标签」：输入已有标签名，回车即分配到该情景 */
+  const handleAssignByName = async (scenarioId: number, rawName: string) => {
+    const name = rawName.trim();
+    if (!name) return;
+    const tag = tags.find((tg) => tg.name === name);
+    if (!tag) {
+      showToast(scenarioSc?.tagNotFound || "未找到该标签", "error");
+      return;
+    }
+    setScenarioTagInputs((prev) => ({ ...prev, [scenarioId]: "" }));
+    await handleAssignTags([tag.id], scenarioId);
+  };
+
+  const handleRemoveFromScenario = (tagId: number) => {
+    handleAssignTags([tagId], null);
+  };
+
+  const toggleUnassignedSelect = (tagId: number) => {
+    setSelectedUnassigned((prev) => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
+    });
+  };
+
+  const handleAIAssignScenarios = () => {
+    if (aiAssigning) return;
+    setConfirmAction({
+      title: scenarioSc?.aiAssign || "AI 分配情景",
+      message: (scenarioSc?.aiAssignConfirm || "将调用 AI 为 {n} 个未分配标签分配情景（仅使用已有情景）").replace(
+        "{n}",
+        String(unassignedTags.length)
+      ),
+      onConfirm: async () => {
+        setConfirmAction(null);
+        setAiAssigning(true);
+        const result = await aiAssignTagScenarios({ onlyUnassigned: true });
+        setAiAssigning(false);
+        if (result.ok && result.data) {
+          showToast(
+            (scenarioSc?.aiAssignDone || "分配 {m} 个，跳过 {k} 个")
+              .replace("{m}", String(result.data.assignments.length))
+              .replace("{k}", String(result.data.skipped.length)),
+            "success"
+          );
+          await loadData();
+        } else {
+          showToast(result.error || "AI 请求失败", "error");
+        }
+      },
+    });
+  };
+
   // Check if all items on current page are selected
   const allPageTagsSelected = pagedTags.length > 0 && pagedTags.every((t) => selectedTags.has(t.name));
   const allPageCatsSelected = pagedCategories.length > 0 && pagedCategories.every((c) => selectedCategories.has(c.slug));
@@ -830,7 +1054,7 @@ export default function TagManagerPage() {
         {/* Tab Switcher */}
         <div className="flex gap-1 rounded-xl bg-card p-1 mb-4">
           <button
-            onClick={() => { setActiveTab("tags"); setSelectedCategories(new Set()); }}
+            onClick={() => { setActiveTab("tags"); setSelectedCategories(new Set()); setSelectedUnassigned(new Set()); }}
             className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-colors ${
               activeTab === "tags" ? "bg-accent text-white shadow-sm" : "text-muted hover:text-foreground"
             }`}
@@ -839,7 +1063,7 @@ export default function TagManagerPage() {
             {t.tagManager?.tagsTab || "标签"} ({tags.length})
           </button>
           <button
-            onClick={() => { setActiveTab("categories"); setSelectedTags(new Set()); }}
+            onClick={() => { setActiveTab("categories"); setSelectedTags(new Set()); setSelectedUnassigned(new Set()); }}
             className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-colors ${
               activeTab === "categories" ? "bg-accent text-white shadow-sm" : "text-muted hover:text-foreground"
             }`}
@@ -847,6 +1071,29 @@ export default function TagManagerPage() {
             <Layers className="h-4 w-4" />
             {t.tagManager?.categoriesTab || "分类"} ({categories.length})
           </button>
+          <button
+            onClick={() => { setActiveTab("scenarios"); setSelectedTags(new Set()); setSelectedCategories(new Set()); }}
+            className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-colors ${
+              activeTab === "scenarios" ? "bg-accent text-white shadow-sm" : "text-muted hover:text-foreground"
+            }`}
+          >
+            <Clapperboard className="h-4 w-4" />
+            {scenarioSc?.tab || "情景"} ({scenarios.length})
+          </button>
+          {/* 情景页签头部：AI 分配 */}
+          {activeTab === "scenarios" && isAdmin && (
+            <button
+              onClick={handleAIAssignScenarios}
+              disabled={aiAssigning}
+              className="flex h-9 shrink-0 items-center gap-1.5 self-center rounded-lg border border-purple-500/40 bg-purple-500/10 px-2.5 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/20 disabled:opacity-50"
+              title={scenarioSc?.aiAssign || "AI 分配情景"}
+            >
+              {aiAssigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              <span className="hidden lg:inline">
+                {aiAssigning ? (scenarioSc?.aiAssignRunning || "AI 分配中...") : (scenarioSc?.aiAssign || "AI 分配情景")}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* 标签归一工作台 */}
@@ -1056,6 +1303,17 @@ export default function TagManagerPage() {
                 <span className="hidden sm:inline">新建</span>
               </button>
             )}
+            {/* Add new scenario button */}
+            {activeTab === "scenarios" && isAdmin && (
+              <button
+                onClick={() => setShowNewScenarioInput(!showNewScenarioInput)}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-border/50 bg-card px-3 text-xs font-medium text-accent transition-colors hover:bg-accent/5 hover:border-accent/40"
+                title={scenarioSc?.createScenario || "新建情景"}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{scenarioSc?.createScenario || "新建"}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1117,6 +1375,42 @@ export default function TagManagerPage() {
             </button>
             <button
               onClick={() => { setShowNewCatInput(false); setNewCatName(""); setNewCatIcon("📚"); }}
+              className="rounded-lg p-1.5 text-muted hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* New scenario input */}
+        {showNewScenarioInput && activeTab === "scenarios" && isAdmin && (
+          <div className="mb-4 flex items-center gap-2 rounded-xl bg-card border border-border/50 p-3">
+            <Clapperboard className="h-4 w-4 text-accent shrink-0" />
+            <input
+              type="color"
+              value={newScenarioColor}
+              onChange={(e) => setNewScenarioColor(e.target.value)}
+              title={scenarioSc?.editColor || "修改颜色"}
+              className="h-8 w-10 shrink-0 cursor-pointer rounded-lg border border-border/50 bg-background p-0.5"
+            />
+            <input
+              type="text"
+              value={newScenarioName}
+              onChange={(e) => setNewScenarioName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreateScenario(); if (e.key === "Escape") { setShowNewScenarioInput(false); setNewScenarioName(""); } }}
+              placeholder={scenarioSc?.scenarioNamePlaceholder || "输入情景名称..."}
+              className="flex-1 bg-transparent text-sm text-foreground placeholder-muted/50 outline-none"
+              autoFocus
+            />
+            <button
+              onClick={handleCreateScenario}
+              disabled={!newScenarioName.trim()}
+              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {t.tagManager?.create || "创建"}
+            </button>
+            <button
+              onClick={() => { setShowNewScenarioInput(false); setNewScenarioName(""); }}
               className="rounded-lg p-1.5 text-muted hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" />
@@ -1346,7 +1640,7 @@ export default function TagManagerPage() {
               t={t}
             />
           </div>
-        ) : (
+        ) : activeTab === "categories" ? (
           /* ── Categories List ── */
           <div>
             {/* Select all header */}
@@ -1502,6 +1796,243 @@ export default function TagManagerPage() {
               onPageSizeChange={(s) => { setPageSize(s); setTagPage(1); setCatPage(1); }}
               t={t}
             />
+          </div>
+        ) : (
+          /* ── Scenarios View（情景） ── */
+          <div>
+            {/* 全部标签 datalist：供各卡片「添加标签」输入联想 */}
+            <datalist id="scenario-all-tags">
+              {tags.map((tg) => (
+                <option key={tg.id} value={tg.name} />
+              ))}
+            </datalist>
+
+            {filteredScenarios.length === 0 && filteredUnassigned.length === 0 ? (
+              <div className="py-12 text-center text-sm text-muted">
+                {search ? (t.tagManager?.noSearchResults || "未找到匹配结果") : (scenarioSc?.empty || "暂无情景")}
+              </div>
+            ) : (
+              <>
+                {/* 情景卡片列表（按 sortOrder） */}
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {filteredScenarios.map((sc, idx) => (
+                    <div
+                      key={sc.id}
+                      className="group flex flex-col space-y-2 rounded-xl border border-border/40 bg-card p-3 transition-colors hover:border-border/60"
+                    >
+                      {/* 头部：色点（颜色输入） + 名称（行内编辑） + 操作 */}
+                      <div className="flex items-center gap-2">
+                        {editingScenarioId === sc.id ? (
+                          <input
+                            value={editScenarioName}
+                            onChange={(e) => setEditScenarioName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveScenarioName(sc.id);
+                              if (e.key === "Escape") setEditingScenarioId(null);
+                            }}
+                            className="flex-1 min-w-0 rounded-lg bg-background px-2 py-1 text-sm text-foreground outline-none ring-1 ring-accent/50"
+                            autoFocus
+                          />
+                        ) : (
+                          <>
+                            <label
+                              className="relative block h-4 w-4 shrink-0 cursor-pointer"
+                              title={scenarioSc?.editColor || "修改颜色"}
+                            >
+                              <span
+                                className="block h-4 w-4 rounded-full border border-border/50"
+                                style={{ backgroundColor: sc.color || "#6366f1" }}
+                              />
+                              <input
+                                type="color"
+                                value={/^#[0-9a-fA-F]{6}$/.test(sc.color) ? sc.color : "#6366f1"}
+                                onChange={(e) => handleScenarioColorChange(sc.id, e.target.value)}
+                                disabled={!isAdmin}
+                                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                              />
+                            </label>
+                            <span className="flex-1 min-w-0 truncate text-sm font-medium text-foreground">
+                              {sc.name}
+                            </span>
+                          </>
+                        )}
+                        <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-xs text-muted">
+                          {sc.tags.length}
+                        </span>
+                        {isAdmin && editingScenarioId !== sc.id && (
+                          <div className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => { setEditingScenarioId(sc.id); setEditScenarioName(sc.name); }}
+                              className="rounded-lg p-1.5 text-muted hover:bg-card-hover hover:text-foreground"
+                              title={t.tagManager?.rename || "重命名"}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleMoveScenario(sc.id, -1)}
+                              disabled={idx === 0}
+                              className="rounded-lg p-1.5 text-muted hover:bg-card-hover hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+                              title={scenarioSc?.moveUp || "上移"}
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleMoveScenario(sc.id, 1)}
+                              disabled={idx === filteredScenarios.length - 1}
+                              className="rounded-lg p-1.5 text-muted hover:bg-card-hover hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+                              title={scenarioSc?.moveDown || "下移"}
+                            >
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteScenario(sc.id)}
+                              className="rounded-lg p-1.5 text-muted hover:bg-red-500/10 hover:text-red-400"
+                              title={t.common?.delete || "删除"}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                        {isAdmin && editingScenarioId === sc.id && (
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              onClick={() => handleSaveScenarioName(sc.id)}
+                              className="rounded-lg p-1.5 text-accent hover:bg-accent/10"
+                              title={t.common?.confirm || "确认"}
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setEditingScenarioId(null)}
+                              className="rounded-lg p-1.5 text-muted hover:text-foreground"
+                              title={t.common?.cancel || "取消"}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 成员标签 chips（× 移出情景） */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {sc.tags.map((tg) => (
+                          <span
+                            key={tg.id}
+                            className="flex items-center gap-1 rounded-md border border-border/50 bg-background/60 px-2 py-0.5 text-xs text-foreground"
+                          >
+                            {tg.name}
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleRemoveFromScenario(tg.id)}
+                                className="text-muted/60 transition-colors hover:text-red-400"
+                                title={scenarioSc?.removeTag || "移出情景"}
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* 添加标签：输入已有名回车即分配 */}
+                      {isAdmin && (
+                        <input
+                          list="scenario-all-tags"
+                          value={scenarioTagInputs[sc.id] || ""}
+                          onChange={(e) => setScenarioTagInputs((prev) => ({ ...prev, [sc.id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleAssignByName(sc.id, e.currentTarget.value);
+                          }}
+                          placeholder={scenarioSc?.addTagPlaceholder || "添加标签..."}
+                          className="mt-auto h-8 w-full rounded-lg border border-border/40 bg-background/60 px-2.5 text-xs text-foreground placeholder:text-muted/50 outline-none transition-colors focus:border-accent/50"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* 未分配区 */}
+                <div className="mt-4 space-y-2 rounded-xl border border-border/40 bg-card/50 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-foreground">
+                      {scenarioSc?.unassignedSection || "未分配标签"}
+                    </span>
+                    <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted">
+                      {unassignedTags.length}
+                    </span>
+                  </div>
+
+                  {/* 批量分配条：已选 N 个 → [情景下拉] [分配] */}
+                  {isAdmin && selectedUnassigned.size > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-accent/10 border border-accent/20 p-2 animate-in fade-in duration-200">
+                      <span className="text-xs font-medium text-accent">
+                        {t.tagManager?.selected || "已选择"} {selectedUnassigned.size} {t.tagManager?.tags || "个标签"}
+                      </span>
+                      <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                        <select
+                          value={assignTargetId}
+                          onChange={(e) => setAssignTargetId(e.target.value)}
+                          className="h-8 rounded-lg border border-border/50 bg-card px-2 text-xs text-foreground outline-none focus:border-accent/50"
+                        >
+                          <option value="">{scenarioSc?.pickScenario || "选择情景"}</option>
+                          {scenarios.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleBatchAssignUnassigned}
+                          disabled={!assignTargetId}
+                          className="flex h-8 items-center rounded-lg bg-accent px-3 text-xs font-medium text-white disabled:opacity-50"
+                        >
+                          {scenarioSc?.assign || "分配"}
+                        </button>
+                        <button
+                          onClick={() => setSelectedUnassigned(new Set())}
+                          className="rounded-lg p-1.5 text-muted hover:text-foreground"
+                          title={t.tagManager?.clearSelection || "取消选择"}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 未分配标签 chips：可点击多选（admin） */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {visibleUnassigned.length === 0 ? (
+                      <span className="text-xs text-muted/60 italic">
+                        {search
+                          ? (t.tagManager?.noSearchResults || "未找到匹配结果")
+                          : (scenarioSc?.unassignedEmpty || "所有标签均已分配情景")}
+                      </span>
+                    ) : (
+                      visibleUnassigned.map((tg) => (
+                        <button
+                          key={tg.id}
+                          onClick={() => toggleUnassignedSelect(tg.id)}
+                          disabled={!isAdmin}
+                          className={`flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                            selectedUnassigned.has(tg.id)
+                              ? "border-accent/60 bg-accent/15 text-accent"
+                              : "border-border/50 bg-background/60 text-foreground hover:border-accent/40"
+                          } ${isAdmin ? "cursor-pointer" : "cursor-default"}`}
+                          title={tg.name}
+                        >
+                          {tg.name}
+                          <span className="text-[10px] text-muted/60">{tg.comicCount}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+
+                  {hiddenUnassignedCount > 0 && (
+                    <div className="text-center text-[11px] text-muted/60">
+                      {t.tagFilter.moreHidden.replace("{n}", String(visibleUnassigned.length))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
       </PageContent>
