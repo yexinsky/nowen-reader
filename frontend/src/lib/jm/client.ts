@@ -378,11 +378,16 @@ export function jmRemoveTagFavorite(tag: string, type: JmTagFavoriteType): Promi
   return jmRequest("/api/tag-favorites", { method: "DELETE", query: { tag, type } });
 }
 
-/* ── 书库补标签(私有扩展,/api/jm/backfill) ── */
+/* ── 标签补全(私有扩展,/api/jm/backfill;入口在书库页弹窗) ── */
 
-/** 无标签漫画清单(仅 comic/mixed 且有管理权的书库;排除小说行) */
-export function jmBackfillCandidates(): Promise<{ list: JmBackfillCandidate[]; total: number }> {
-  return jmRequest<{ list: JmBackfillCandidate[]; total: number }>("/api/backfill/candidates");
+/** 无标签漫画清单(仅 comic/mixed 且有管理权的书库;排除小说行;libraryIds 缺省 = 全部) */
+export function jmBackfillCandidates(
+  libraryIds?: string[],
+): Promise<{ list: JmBackfillCandidate[]; total: number }> {
+  return jmRequest<{ list: JmBackfillCandidate[]; total: number }>("/api/backfill/candidates", {
+    query:
+      libraryIds && libraryIds.length > 0 ? { libraryIds: libraryIds.join(",") } : undefined,
+  });
 }
 
 /** 关键词/车号搜索 + 标题打分(不改库;后端全局限速 ≥1.2s/次;aid 命中落空自动回退关键词) */

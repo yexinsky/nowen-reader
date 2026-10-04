@@ -19,10 +19,11 @@ import {
 } from "@/hooks/useComics";
 import { Comic } from "@/types/comic";
 import { useTranslation, useLocale } from "@/lib/i18n";
-import { CheckSquare, CheckCheck, LayoutGrid, List, Copy, Upload, Image, BookOpen, Brain, Loader2, Eye, EyeOff, Settings2 } from "lucide-react";
+import { CheckSquare, CheckCheck, LayoutGrid, List, Copy, Upload, Image, BookOpen, Brain, Loader2, Eye, EyeOff, Settings2, Tags } from "lucide-react";
 import DuplicateDetector from "@/components/DuplicateDetector";
 import MergeGroupDialog from "@/components/MergeGroupDialog";
 import UploadDialog from "@/components/UploadDialog";
+import TagBackfillModal from "@/components/jm/TagBackfillModal";
 import { LibraryTabsBar } from "@/components/home/LibraryTabsBar";
 
 import AddToGroupDialog from "@/components/AddToGroupDialog";
@@ -250,6 +251,8 @@ export default function BooksPage() {
 
   // Duplicate detection
   const [showDuplicates, setShowDuplicates] = useState(false);
+  // 标签补全弹窗(JM 在线源,按当前所选书库过滤候选)
+  const [backfillOpen, setBackfillOpen] = useState(false);
 
   const [showMergeDialog, setShowMergeDialog] = useState(false);
 
@@ -1034,6 +1037,18 @@ export default function BooksPage() {
                   <span className="hidden sm:inline">{t.duplicates.detect}</span>
                 </button>
 
+                {/* 标签补全 — JM 在线源为无标签旧书匹配补标(弹窗选择流) */}
+                {hasManageableLibrary && (
+                <button
+                  onClick={() => setBackfillOpen(true)}
+                  className="motion-button flex h-8 items-center gap-1.5 rounded-lg border border-border/40 bg-card px-2.5 sm:px-3 text-xs font-medium text-muted transition-all hover:text-foreground"
+                  title="用 JM 在线源为无标签漫画补全标签"
+                >
+                  <Tags className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">标签补全</span>
+                </button>
+                )}
+
                 {/* Batch Mode Toggle — 仅管理员可见 */}
                 {hasManageableLibrary && (
                 <button
@@ -1621,6 +1636,14 @@ export default function BooksPage() {
         onClose={() => setUploadDialogOpen(false)}
         defaultLibraryId={selectedLibraryId}
         onUploaded={async () => { await refetch(); }}
+      />
+
+      {/* 标签补全弹窗(JM 在线源;候选按当前所选书库过滤,空 = 全部可管理书库) */}
+      <TagBackfillModal
+        open={backfillOpen}
+        onClose={() => setBackfillOpen(false)}
+        libraryIds={selectedLibraryIds}
+        onChanged={refetch}
       />
     </>
   );

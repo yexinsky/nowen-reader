@@ -332,7 +332,7 @@ export interface JmTagFavorite {
   createdAt: string;
 }
 
-/* ── 书库补标签(私有扩展,非 MOBILE_API.md 契约) ── */
+/* ── 标签补全(私有扩展,非 MOBILE_API.md 契约) ── */
 
 /** 无标签漫画候选(searchKeyword 为后端按标题清洗出的默认搜索词,前端可改) */
 export interface JmBackfillCandidate {
@@ -353,6 +353,8 @@ export interface JmBackfillMatch {
   tags: string[];
   score: number;
   confidence: "high" | "medium" | "low";
+  /** 站内 /api/image 代理封面路径(选择流缩略图用) */
+  coverUrl?: string;
   /** 车号直达命中(aid 即权威匹配,与标题相似度无关) */
   viaAid: boolean;
 }

@@ -25,7 +25,6 @@ import {
   Search,
   Sparkles,
   Tag,
-  Tags,
 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
@@ -245,13 +244,6 @@ function UserCard() {
           >
             <Tag className="h-4 w-4" />
             标签收藏
-          </Link>
-          <Link
-            href="/jm/backfill"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-          >
-            <Tags className="h-4 w-4" />
-            书库补标签
           </Link>
           <Link
             href="/jm/history"

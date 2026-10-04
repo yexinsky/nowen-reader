@@ -861,12 +861,14 @@ bash scripts/jm-download-e2e.sh
 go test ./internal/jm/ -run TestTagFavorite -v
 ```
 
-## 8. 私有扩展：书库补标签（`/api/jm/backfill`，仅内置 Go 服务实现）
+## 8. 私有扩展：标签补全（`/api/jm/backfill`，仅内置 Go 服务实现）
 
-用 JM 在线搜索给书库中**无任何标签**的旧书批量补标签。无状态三端点，批量循环由前端驱动：
-「无标签」本身即进度源（应用成功的漫画自动退出 candidates），刷新页面天然断点续跑。
+用 JM 在线搜索给书库中**无任何标签**的旧书补标签（原名「书库补标签」，入口在书库页工具条
+「标签补全」弹窗）。无状态三端点，匹配/应用节奏由前端选择流驱动：
+「无标签」本身即进度源（应用成功的漫画自动退出 candidates），重新打开弹窗天然断点续跑。
 
-- 候选范围：`comic`/`mixed` 书库且当前用户有管理权；排除 `type='novel'` 行
+- 候选范围：`comic`/`mixed` 书库且当前用户有管理权；排除 `type='novel'` 行；
+  可用 `libraryIds` 与可管理书库求交集（书库弹窗按当前所选书库过滤）
 - 搜索词清洗（服务端）：HTML 实体 → 双变体标题按中央数字段拆分取干净一半（`A-<id>-B`）→
   数字 id 段（4~7 位；尾部与中部均覆盖）+ 重复段去重 → 噪声括号（汉化组/搬运/raw/翻译/DL版 等）→
   卷话后缀；**最后剥掉全部括号留标题主体**——实测上游 /search 对带括号的长关键词失效
@@ -885,6 +887,8 @@ go test ./internal/jm/ -run TestTagFavorite -v
 | POST | `/api/jm/backfill/apply` | 按 `aid` 拉详情写标签/作者（与下载入库自动打标同口径） |
 
 ### 8.2 GET /api/jm/backfill/candidates — 候选清单
+
+**Query**：`libraryIds`（可选，逗号分隔书库 ID；与可管理书库求交集，缺省 = 全部可管理书库）
 
 **响应 data**
 
@@ -933,6 +937,7 @@ go test ./internal/jm/ -run TestTagFavorite -v
 | tags | string[] | 搜索条目自带标签（normalizeJmTags 口径，上限 30），可能为空 |
 | score | float | 0~1：归一全等 1.0；互相包含且短串 ≥8 字符（详略两版）0.9 / 过短子串 0.75；bigram 子集 0.8；其余 Dice×0.7；作者一致 +0.1 |
 | confidence | string | `high`(≥0.85) / `medium`(≥0.65) / `low` |
+| coverUrl | string | 站内 `/api/image` 代理封面路径（前端 `resolveJmUrl` 渲染选择流缩略图；可能缺省） |
 | viaAid | bool | true = 车号直达命中（aid 即权威匹配） |
 
 **错误**：`422 {"detail": "keyword 与 aid 至少提供其一" | "keyword 过长(上限 100 字符)"}`；上游失败按 §0 错误包装。
@@ -955,8 +960,10 @@ go test ./internal/jm/ -run TestTagFavorite -v
 
 | 入口 | 位置 | 行为 |
 |---|---|---|
-| 在线首页入口 | `app/jm/page.tsx` 快捷区 | 「书库补标签」（Tags 图标）→ `/jm/backfill` |
-| 补标签页 | `app/jm/backfill/page.tsx` | 行内可编辑搜索词、单行「匹配/应用/备选/跳过」、「自动匹配未处理」顺序循环（可停止）、「应用全部高置信」批量写入；筛选（待处理/已处理/全部） |
+| 书库页工具条 | `app/books/page.tsx` | 「标签补全」按钮（需书库管理权）→ `components/jm/TagBackfillModal.tsx` 弹窗，候选按当前所选书库标签过滤（`libraryIds`），应用成功回调外层刷新书库 |
+| 弹窗选择流 | `TagBackfillModal.tsx` | 行内可编辑搜索词、单行「匹配 → 挑选 JM 结果（含封面缩略图）→ 应用/换一个/跳过」；标签只能来自 JM 匹配结果，无自定义添加；筛选（待处理/已处理/全部） |
+
+> 原 `/jm/backfill` 独立页与在线首页快捷入口已移除（入口收敛到书库页弹窗）。
 
 ### 8.6 测试
 

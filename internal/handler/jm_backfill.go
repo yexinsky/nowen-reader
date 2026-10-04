@@ -1,14 +1,15 @@
 package handler
 
-// JM 书库补标签端点(私有扩展):用 JM 在线源给书库中无标签的旧书批量补标签。
+// JM 标签补全端点(私有扩展):用 JM 在线源给书库中无标签的旧书补标签。
 //
 //	GET  /api/jm/backfill/candidates → 无标签漫画清单(附清洗后的搜索词)
 //	POST /api/jm/backfill/match      → 关键词搜索 + 标题打分(不改库)
 //	POST /api/jm/backfill/apply      → 按 aid 拉详情,写入标签/作者
 //
-// 设计:无状态三端点,批量循环由前端驱动;「无标签」本身即进度源
-// (补过标的漫画自动退出 candidates),刷新页面天然断点续跑。
-// 上游纪律:match/apply 共用限速器(≥1.2s/次),批量循环打不穿上游。
+// 设计:无状态三端点,匹配/应用节奏由前端选择流驱动;「无标签」本身即进度源
+// (补过标的漫画自动退出 candidates),重新打开弹窗天然断点续跑。
+// candidates 支持 libraryIds 逗号分隔参数与可管理书库求交集(书库页弹窗按当前所选书库过滤)。
+// 上游纪律:match/apply 共用限速器(≥1.2s/次),循环调用打不穿上游。
 // 写入口径与下载入库自动打标(jm_download.go)完全一致:
 // 标签 normalizeJmTags(上限 30)、作者过占位符、author/metadataSource 仅空缺回填。
 
@@ -341,8 +342,21 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 			return
 		}
 		libraryIDs := make([]string, 0, len(libs))
+		// 可选 libraryIds=逗号分隔:与可管理书库求交集(书库页弹窗按当前所选书库过滤);
+		// 缺省/为空 = 全部可管理书库
+		requested := map[string]struct{}{}
+		if raw := strings.TrimSpace(c.Query("libraryIds")); raw != "" {
+			for _, s := range strings.Split(raw, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					requested[s] = struct{}{}
+				}
+			}
+		}
 		for _, lib := range libs {
 			if !lib.Enabled || lib.Type == "novel" {
+				continue
+			}
+			if _, ok := requested[lib.ID]; len(requested) > 0 && !ok {
 				continue
 			}
 			canManage, err := store.UserCanManageLibrary(uid, lib.ID)
@@ -410,10 +424,10 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 			if len(rawList) == 1 {
 				if meta, ok := jm.ExtractComicItemMeta(rawList[0]); ok && meta.Aid == body.Aid {
 					score := jmScoreMatch(body.Title, body.Author, meta.Title, meta.Author)
-					item := jmMatchItem{
-						Aid: meta.Aid, Title: meta.Title, Author: meta.Author,
-						Tags: meta.Tags, Score: score, ViaAid: true,
-					}
+				item := jmMatchItem{
+					Aid: meta.Aid, Title: meta.Title, Author: meta.Author,
+					Tags: meta.Tags, Score: score, ViaAid: true, CoverURL: meta.CoverURL,
+				}
 					if score >= jmAidMatchMinScore {
 						// aid 即权威匹配;相似度过关则视为确定命中
 						item.Score = 1
@@ -451,11 +465,12 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 				continue
 			}
 			matches = append(matches, jmMatchItem{
-				Aid:    meta.Aid,
-				Title:  meta.Title,
-				Author: meta.Author,
-				Tags:   meta.Tags,
-				Score:  jmScoreMatch(body.Title, body.Author, meta.Title, meta.Author),
+				Aid:      meta.Aid,
+				Title:    meta.Title,
+				Author:   meta.Author,
+				Tags:     meta.Tags,
+				Score:    jmScoreMatch(body.Title, body.Author, meta.Title, meta.Author),
+				CoverURL: meta.CoverURL,
 			})
 		}
 		sort.SliceStable(matches, func(i, j int) bool { return matches[i].Score > matches[j].Score })
@@ -530,6 +545,7 @@ type jmMatchItem struct {
 	Tags       []string `json:"tags"`
 	Score      float64  `json:"score"`
 	Confidence string   `json:"confidence"`
+	CoverURL   string   `json:"coverUrl,omitempty"` // 站内 /api/image 代理路径,选择流封面用
 	// ViaAid=true 表示按标题内嵌车号直达命中(aid 即权威匹配,与标题相似度无关)
 	ViaAid bool `json:"viaAid"`
 }
