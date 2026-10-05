@@ -14,6 +14,7 @@ import {
 import { apiPath } from "@/lib/base-path";
 import { useTranslation } from "@/lib/i18n";
 import { useToast } from "@/components/Toast";
+import { SearchableSelect } from "@/components/SearchableSelect";
 
 // ── Types (frozen contract: /api/tags/normalization/*, /api/tags/aliases) ──
 
@@ -568,18 +569,18 @@ export function TagNormalizationPanel({
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted">{n?.targetTagLabel}</label>
-                  <select
+                  <SearchableSelect
                     value={manualTargetId}
-                    onChange={(e) => setManualTargetId(Number(e.target.value))}
-                    className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent/50"
-                  >
-                    <option value={0}>{n?.targetTagPlaceholder}</option>
-                    {targetCandidates.map((tg) => (
-                      <option key={tg.id} value={tg.id}>
-                        {tg.name} ({tg.count})
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setManualTargetId}
+                    options={targetCandidates.map((tg) => ({
+                      value: tg.id,
+                      label: tg.name,
+                      hint: String(tg.count),
+                    }))}
+                    placeholder={n?.targetTagPlaceholder}
+                    searchPlaceholder={n?.searchPlaceholder}
+                    noMatchText={t.common?.noSearchResults}
+                  />
                 </div>
               </div>
               <div className="flex justify-end">

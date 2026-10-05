@@ -1383,6 +1383,7 @@ const en: Translations = {
       sourceTagPlaceholder: "Type or pick a source tag...",
       targetTagLabel: "Target tag",
       targetTagPlaceholder: "Select a target tag...",
+      searchPlaceholder: "Search tags...",
       applyManual: "Merge",
       manualSourceNotFound: "Source tag not found, please pick one from the list",
       presetAliasSaved: "Source tag does not exist yet; saved as a preset alias. Future writes (backfill/download) will resolve to the target tag automatically",

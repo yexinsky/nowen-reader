@@ -1380,6 +1380,7 @@ autoDetect: "智能合集",
       sourceTagPlaceholder: "输入或选择源标签...",
       targetTagLabel: "目标标签",
       targetTagPlaceholder: "选择目标标签...",
+      searchPlaceholder: "搜索标签...",
       applyManual: "归并",
       manualSourceNotFound: "未找到该源标签，请从列表中选择",
       presetAliasSaved: "源标签尚不存在，已保存为预设别名；下次标签补全/下载写入该名时将自动归并到目标标签",
@@ -2734,6 +2735,7 @@ export interface Translations {
       sourceTagPlaceholder: string;
       targetTagLabel: string;
       targetTagPlaceholder: string;
+      searchPlaceholder: string;
       applyManual: string;
       manualSourceNotFound: string;
       presetAliasSaved: string;
