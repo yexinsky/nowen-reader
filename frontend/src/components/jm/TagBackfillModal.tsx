@@ -8,6 +8,8 @@
  * - 入口在书库页(/books)工具条;候选按当前所选书库过滤(libraryIds,空 = 全部可管理书库)
  * - 选择流:逐本「匹配」→ JM 结果卡片(含封面)人工挑选 → 「应用」
  *   (补标签:后端按 aid 拉详情写标签;补全名称:调 rename 改写书库标题)
+ * - 批量:工具条「自动匹配未处理」顺序搜索待处理行、「应用全部高置信」顺序写入,
+ *   带终态纪律(改词=新任务 / error 最多自动重试一次 / noresult 同词永不自动重试)防空转
  * - 标签只能来自 JM 匹配结果,不支持自定义添加(无添加标签入口)
  * - 进度即状态:应用成功的漫画下次打开自动退出候选列表
  * - 未登录在线源时弹窗内提示,不做页面级跳转
@@ -22,8 +24,10 @@ import {
   ChevronUp,
   CircleAlert,
   Loader2,
+  Play,
   Search,
   SkipForward,
+  Square,
   Tags,
   Undo2,
   X,
@@ -63,9 +67,20 @@ interface BackfillRow {
   /** 补全名称:应用成功的改写结果(applied 终态展示 旧名→新名,以服务端响应为准) */
   appliedRename: { oldTitle: string; newTitle: string } | null;
   errorMsg: string;
+  /** 已实际发起的搜索次数(含手动);自动匹配据此决定 error 行是否还能自动重试 */
+  attempts: number;
+  /** 最近一次实际搜索的词;与当前 keyword 不同 = 改过词,视为新任务 */
+  searchedKeyword: string;
 }
 
 type Filter = "todo" | "done" | "all";
+
+/** 行的当前选中结果:按 selectedAid 找,缺省取第一个 */
+function chosenMatch(r: BackfillRow): JmBackfillMatch | undefined {
+  return r.matches.find((m) => m.aid === r.selectedAid) ?? r.matches[0];
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export default function TagBackfillModal({
   open,
@@ -188,6 +203,20 @@ function BackfillBody({
 
   // 行状态的同步镜像:跨 await 更新与 setState 同帧生效
   const rowsRef = useRef<BackfillRow[]>([]);
+
+  // 批量循环:busy 标记当前循环类型;stopRef 置位后当前行跑完即停,不硬中断
+  const [busy, setBusy] = useState<"match" | "apply" | null>(null);
+  const stopRef = useRef(false);
+  // 批量期间抑制每行的 onChanged/toast,循环结束时统一补发一次(手动单发不受影响)
+  const batchTouchedRef = useRef(false);
+
+  // 弹窗关闭/模式切换会卸载本组件:置停止位,避免异步循环在卸载后继续跑
+  useEffect(() => {
+    return () => {
+      stopRef.current = true;
+    };
+  }, []);
+
   const libKey = libraryIds?.join(",") ?? "";
 
   const updateRow = useCallback(
@@ -225,6 +254,8 @@ function BackfillBody({
         newTitleEdited: false,
         appliedRename: null,
         errorMsg: "",
+        attempts: 0,
+        searchedKeyword: "",
       }));
       rowsRef.current = next;
       setRows(next);
@@ -251,12 +282,15 @@ function BackfillBody({
         return;
       }
       // 重开一轮匹配:清掉上次的新名编辑,预填随新一轮选中结果重新合成
+      // attempts/searchedKeyword 同步记账:自动匹配的终态纪律依赖这两个字段
       updateRow(id, (r) => ({
         status: "matching",
         errorMsg: "",
         expanded: false,
         newTitle: "",
         newTitleEdited: false,
+        attempts: r.attempts + 1,
+        searchedKeyword: kw,
       }));
       try {
         const data = await jmBackfillMatch({
@@ -280,26 +314,31 @@ function BackfillBody({
     [updateRow],
   );
 
-  /** 单行应用:后端按 aid 拉详情写标签/作者 */
+  /** 单行应用:后端按 aid 拉详情写标签/作者;batch=批量循环调用,抑制逐行 toast/onChanged */
   const applyRow = useCallback(
-    async (id: string, aid: string) => {
+    async (id: string, aid: string, opts?: { batch?: boolean }) => {
       const row = rowsRef.current.find((r) => r.candidate.id === id);
       if (!row || !aid) return;
+      const batch = opts?.batch === true;
       updateRow(id, { applying: true, errorMsg: "" });
       try {
         const resp = await jmBackfillApply({ comicId: id, aid });
         if (resp.applied > 0) {
           updateRow(id, { applying: false, status: "applied", appliedTags: resp.tags });
-          toast.success(`已写入 ${resp.applied} 个标签`);
-          onChanged?.();
+          if (batch) {
+            batchTouchedRef.current = true;
+          } else {
+            toast.success(`已写入 ${resp.applied} 个标签`);
+            onChanged?.();
+          }
         } else {
           updateRow(id, { applying: false, status: "noTags" });
-          toast.warning("该作品上游详情没有标签,未写入;可换备选或改词重搜");
+          if (!batch) toast.warning("该作品上游详情没有标签,未写入;可换备选或改词重搜");
         }
       } catch (err) {
         const msg = isJmApiError(err) ? err.message : "应用失败,请稍后重试";
         updateRow(id, { applying: false, status: "error", errorMsg: msg });
-        toast.error(msg);
+        if (!batch) toast.error(msg);
       }
     },
     [toast, updateRow, onChanged],
@@ -307,9 +346,10 @@ function BackfillBody({
 
   /** 单行应用(补全名称):后端按 aid 拉详情改写书库标题;用户编辑过新名才传,未编辑由服务端合成 */
   const renameRow = useCallback(
-    async (id: string, aid: string) => {
+    async (id: string, aid: string, opts?: { batch?: boolean }) => {
       const row = rowsRef.current.find((r) => r.candidate.id === id);
       if (!row || !aid) return;
+      const batch = opts?.batch === true;
       const editedTitle = row.newTitle.trim();
       const newTitle = row.newTitleEdited && editedTitle ? editedTitle : undefined;
       updateRow(id, { applying: true, errorMsg: "" });
@@ -324,7 +364,10 @@ function BackfillBody({
           status: "applied",
           appliedRename: { oldTitle: resp.oldTitle, newTitle: resp.newTitle },
         });
-        if (resp.changed) {
+        if (batch) {
+          // 批量:名称真改动了才需要外层刷新,结束时统一补发
+          if (resp.changed) batchTouchedRef.current = true;
+        } else if (resp.changed) {
           toast.success("标题已更新");
           onChanged?.();
         } else {
@@ -333,11 +376,88 @@ function BackfillBody({
       } catch (err) {
         const msg = isJmApiError(err) ? err.message : "改名失败,请稍后重试";
         updateRow(id, { applying: false, status: "error", errorMsg: msg });
-        toast.error(msg);
+        if (!batch) toast.error(msg);
       }
     },
     [toast, updateRow, onChanged],
   );
+
+  /** 自动匹配待处理判定(终态纪律:每行处理完必进终态或耗尽额度,循环必然收敛) */
+  const isMatchPending = useCallback((r: BackfillRow): boolean => {
+    const kw = r.keyword.trim();
+    if (!kw) return false; // 空词不处理
+    if (
+      r.status === "applied" ||
+      r.status === "skipped" ||
+      r.status === "noTags" ||
+      r.status === "matching"
+    ) {
+      return false; // 终态/进行中不碰
+    }
+    // idle 直接搜;改过词(≠上次实际搜索的词)= 新任务;error 同词最多自动重试一次
+    // noresult 同词永不自动重试(kw === searchedKeyword 时下面任一条件都不成立)
+    return (
+      r.status === "idle" || kw !== r.searchedKeyword || (r.status === "error" && r.attempts < 2)
+    );
+  }, []);
+
+  /** 自动匹配未处理:逐行顺序搜索,直到没有待处理行或点停止 */
+  const runAutoMatch = useCallback(async () => {
+    setBusy("match");
+    stopRef.current = false;
+    try {
+      while (!stopRef.current) {
+        // 必须走 rowsRef 镜像:跨 await 拿最新行状态
+        const next = rowsRef.current.find(isMatchPending);
+        if (!next) break;
+        await matchRow(next.candidate.id, next.keyword);
+        if (stopRef.current) break;
+        await sleep(400);
+      }
+      if (!stopRef.current) toast.info("自动匹配完成");
+    } finally {
+      setBusy(null);
+    }
+  }, [isMatchPending, matchRow, toast]);
+
+  /** 批量应用目标:匹配完成、不在应用中、且当前选中结果高置信 */
+  const isApplyTarget = useCallback((r: BackfillRow): boolean => {
+    return r.status === "matched" && !r.applying && chosenMatch(r)?.confidence === "high";
+  }, []);
+
+  /** 应用全部高置信:逐行顺序应用(补标签/改名共用一个循环),noTags/error 是终态天然退出 */
+  const runAutoApply = useCallback(async () => {
+    setBusy("apply");
+    stopRef.current = false;
+    batchTouchedRef.current = false;
+    let appliedCount = 0;
+    try {
+      while (!stopRef.current) {
+        const next = rowsRef.current.find(isApplyTarget);
+        if (!next) break;
+        const chosen = chosenMatch(next);
+        if (!chosen) break;
+        await (mode === "title"
+          ? renameRow(next.candidate.id, chosen.aid, { batch: true })
+          : applyRow(next.candidate.id, chosen.aid, { batch: true }));
+        if (
+          rowsRef.current.find((r) => r.candidate.id === next.candidate.id)?.status === "applied"
+        ) {
+          appliedCount++;
+        }
+        if (stopRef.current) break;
+        await sleep(400);
+      }
+      // 批量期间逐行 onChanged 被抑制,结束(含中途停止)统一补发一次
+      if (batchTouchedRef.current) {
+        onChanged?.();
+        batchTouchedRef.current = false;
+      }
+      if (!stopRef.current) toast.info(`高置信批量应用完成 ${appliedCount} 本`);
+    } finally {
+      setBusy(null);
+    }
+  }, [isApplyTarget, mode, renameRow, applyRow, onChanged, toast]);
 
   const counts = useMemo(() => {
     const done = rows.filter((r) => r.status === "applied" || r.status === "skipped").length;
@@ -350,6 +470,12 @@ function BackfillBody({
     return rows.filter((r) => (filter === "done" ? doneSet(r) : !doneSet(r)));
   }, [rows, filter]);
 
+  /** 「应用全部高置信」的可应用行数(为 0 时按钮禁用) */
+  const applyTargetCount = useMemo(
+    () => rows.filter(isApplyTarget).length,
+    [rows, isApplyTarget],
+  );
+
   return (
     <>
       {/* 工具条:进度 + 筛选 */}
@@ -358,7 +484,40 @@ function BackfillBody({
           {mode === "title" ? "待改名" : "未打标"} {counts.total} 本 · 待处理 {counts.todo} · 已处理{" "}
           {counts.done}
         </p>
-        <div className="ml-auto flex rounded-lg border border-border p-0.5 text-xs">
+        {/* 批量操作:自动匹配 / 应用全部高置信;busy 时原位置变为停止按钮 */}
+        {busy ? (
+          <button
+            type="button"
+            onClick={() => {
+              stopRef.current = true;
+            }}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20"
+          >
+            <Square className="h-3.5 w-3.5" />
+            {busy === "match" ? "停止匹配" : "停止应用"}
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={runAutoMatch}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent/50 hover:text-accent"
+            >
+              <Play className="h-3.5 w-3.5" />
+              自动匹配未处理
+            </button>
+            <button
+              type="button"
+              onClick={runAutoApply}
+              disabled={applyTargetCount === 0}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Check className="h-3.5 w-3.5" />
+              {mode === "title" ? "应用全部高置信(改名)" : "应用全部高置信"}({applyTargetCount})
+            </button>
+          </>
+        )}
+        <div className="flex rounded-lg border border-border p-0.5 text-xs">
           {(
             [
               ["todo", "待处理"],
@@ -421,11 +580,11 @@ function BackfillBody({
                 key={row.candidate.id}
                 row={row}
                 mode={mode}
+                locked={busy !== null}
                 onKeyword={(v) => updateRow(row.candidate.id, { keyword: v })}
                 onMatch={() => matchRow(row.candidate.id, row.keyword)}
                 onApply={() => {
-                  const chosen =
-                    row.matches.find((m) => m.aid === row.selectedAid) ?? row.matches[0];
+                  const chosen = chosenMatch(row);
                   if (chosen) {
                     if (mode === "title") renameRow(row.candidate.id, chosen.aid);
                     else applyRow(row.candidate.id, chosen.aid);
@@ -473,6 +632,7 @@ function BackfillBody({
 function BackfillRowCard({
   row,
   mode,
+  locked,
   onKeyword,
   onMatch,
   onApply,
@@ -484,6 +644,8 @@ function BackfillRowCard({
 }: {
   row: BackfillRow;
   mode: BackfillMode;
+  /** 批量循环进行中:行内所有交互(含输入框回车)冻结 */
+  locked: boolean;
   onKeyword: (v: string) => void;
   onMatch: () => void;
   onApply: () => void;
@@ -494,7 +656,7 @@ function BackfillRowCard({
   onReset: () => void;
 }) {
   const { candidate, status } = row;
-  const top = row.matches.find((m) => m.aid === row.selectedAid) ?? row.matches[0];
+  const top = chosenMatch(row);
 
   return (
     <li
@@ -523,14 +685,15 @@ function BackfillRowCard({
           value={row.keyword}
           onChange={(e) => onKeyword(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && status !== "matching") onMatch();
+            if (e.key === "Enter" && !locked && status !== "matching") onMatch();
           }}
           placeholder="搜索词"
           spellCheck={false}
-          className="h-8 w-44 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-accent/60"
+          disabled={locked}
+          className="h-8 w-44 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50"
         />
 
-        <RowActionButton row={row} onMatch={onMatch} onReset={onReset} />
+        <RowActionButton row={row} locked={locked} onMatch={onMatch} onReset={onReset} />
       </div>
 
       {/* 状态区 */}
@@ -637,8 +800,8 @@ function BackfillRowCard({
                         onChange={(e) => onNewTitle(e.target.value)}
                         placeholder="新名称"
                         spellCheck={false}
-                        disabled={row.applying}
-                        className="h-7 min-w-0 flex-1 rounded-lg border border-border bg-card px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-accent/60"
+                        disabled={row.applying || locked}
+                        className="h-7 min-w-0 flex-1 rounded-lg border border-border bg-card px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50"
                       />
                     </div>
                   </div>
@@ -647,7 +810,7 @@ function BackfillRowCard({
                   <button
                     type="button"
                     onClick={onApply}
-                    disabled={row.applying}
+                    disabled={row.applying || locked}
                     className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {row.applying ? (
@@ -661,7 +824,8 @@ function BackfillRowCard({
                     <button
                       type="button"
                       onClick={onToggleExpand}
-                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:text-foreground"
+                      disabled={locked}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       换一个({row.matches.length - 1})
                       {row.expanded ? (
@@ -674,7 +838,7 @@ function BackfillRowCard({
                   <button
                     type="button"
                     onClick={onSkip}
-                    disabled={row.applying}
+                    disabled={row.applying || locked}
                     className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <SkipForward className="h-3 w-3" />
@@ -709,7 +873,7 @@ function BackfillRowCard({
                     <button
                       type="button"
                       onClick={() => onSelect(m.aid)}
-                      disabled={row.applying}
+                      disabled={row.applying || locked}
                       className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       选这个
@@ -755,10 +919,12 @@ function MatchCover({ match, small }: { match: JmBackfillMatch; small?: boolean 
 /** 行尾主操作按钮:随状态切换(匹配/重搜/恢复) */
 function RowActionButton({
   row,
+  locked,
   onMatch,
   onReset,
 }: {
   row: BackfillRow;
+  locked: boolean;
   onMatch: () => void;
   onReset: () => void;
 }) {
@@ -770,7 +936,8 @@ function RowActionButton({
       <button
         type="button"
         onClick={onReset}
-        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
+        disabled={locked}
+        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Undo2 className="h-3.5 w-3.5" />
         恢复
@@ -790,7 +957,8 @@ function RowActionButton({
     <button
       type="button"
       onClick={onMatch}
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent/50 hover:text-accent"
+      disabled={locked}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
       {isRetry ? <Undo2 className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
       {isRetry ? "重搜" : "匹配"}
