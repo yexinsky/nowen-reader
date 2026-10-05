@@ -4,6 +4,7 @@ import { apiPath } from "@/lib/base-path";
 import { useState, useCallback, useMemo, useRef } from "react";
 import { Tag, ChevronRight, Languages, Search, X } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
+import { tagMatchesQuery } from "@/lib/tagNorm";
 import type { TagScenarioGroup } from "@/api/tags";
 
 export type { TagScenarioGroup };
@@ -103,11 +104,10 @@ export default function TagFilter({
     }
   }, [translating, locale, onClearAll, onTagsTranslated]);
 
-  // 面板内的标签列表：已选置顶 + 按关键词过滤 + 渲染数量上限
+  // 面板内的标签列表：已选置顶 + 按关键词过滤（繁简互通）+ 渲染数量上限
   const { restTags, hiddenCount } = useMemo(() => {
     const selectedSet = new Set(selectedTags);
-    const q = query.trim().toLowerCase();
-    const matches = (tag: string) => !q || tag.toLowerCase().includes(q);
+    const matches = (tag: string) => tagMatchesQuery(tag, query);
     const rest = allTags.filter((tag) => !selectedSet.has(tag) && matches(tag));
     return {
       restTags: rest.slice(0, RENDER_LIMIT),
@@ -119,8 +119,7 @@ export default function TagFilter({
   const groupedSections = useMemo(() => {
     if (!scenarios || scenarios.length === 0 || allTags.length <= FOLD_THRESHOLD) return null;
     const selectedSet = new Set(selectedTags);
-    const q = query.trim().toLowerCase();
-    const matches = (tag: string) => !q || tag.toLowerCase().includes(q);
+    const matches = (tag: string) => tagMatchesQuery(tag, query);
     const allSet = new Set(allTags);
     const assignedSet = new Set<string>();
 
@@ -136,7 +135,7 @@ export default function TagFilter({
           rest: members.filter((tg) => !selectedSet.has(tg) && matches(tg)),
         };
       })
-      .filter((g) => g.total > 0 && (g.rest.length > 0 || !q));
+      .filter((g) => g.total > 0 && (g.rest.length > 0 || !query.trim()));
 
     const unassignedRest = allTags.filter(
       (tg) => !assignedSet.has(tg) && !selectedSet.has(tg) && matches(tg)

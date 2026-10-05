@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
+import { tagMatchesQuery } from "@/lib/tagNorm";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { TagNormalizationPanel } from "@/components/TagNormalizationPanel";
 import {
@@ -401,14 +402,12 @@ export default function TagManagerPage() {
   const authorTagsAll = useMemo(() => tags.filter((tg) => tg.kind === "author"), [tags]);
 
   const filteredTags = useMemo(() => {
-    const q = search.toLowerCase();
-    const filtered = contentTags.filter((item) => item.name.toLowerCase().includes(q));
+    const filtered = contentTags.filter((item) => tagMatchesQuery(item.name, search));
     return sortItems(filtered);
   }, [contentTags, search, sortItems]);
 
   const filteredAuthorTags = useMemo(() => {
-    const q = search.toLowerCase();
-    const filtered = authorTagsAll.filter((item) => item.name.toLowerCase().includes(q));
+    const filtered = authorTagsAll.filter((item) => tagMatchesQuery(item.name, search));
     return sortItems(filtered);
   }, [authorTagsAll, search, sortItems]);
 
@@ -428,16 +427,14 @@ export default function TagManagerPage() {
   );
 
   const filteredScenarios = useMemo(() => {
-    const q = search.toLowerCase();
-    if (!q) return sortedScenarios;
+    if (!search.trim()) return sortedScenarios;
     return sortedScenarios.filter(
-      (s) => s.name.toLowerCase().includes(q) || s.tags.some((tg) => tg.name.toLowerCase().includes(q))
+      (s) => tagMatchesQuery(s.name, search) || s.tags.some((tg) => tagMatchesQuery(tg.name, search))
     );
   }, [sortedScenarios, search]);
 
   const filteredUnassigned = useMemo(() => {
-    const q = search.toLowerCase();
-    return unassignedTags.filter((tg) => !q || tg.name.toLowerCase().includes(q));
+    return unassignedTags.filter((tg) => tagMatchesQuery(tg.name, search));
   }, [unassignedTags, search]);
 
   const visibleUnassigned = useMemo(

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search } from "lucide-react";
+import { tagMatchesQuery } from "@/lib/tagNorm";
 
 export interface SearchableSelectOption {
   value: number;
@@ -60,9 +61,8 @@ export function SearchableSelect({
   const selected = options.find((o) => o.value === value);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q));
+    if (!query.trim()) return options;
+    return options.filter((o) => tagMatchesQuery(o.label, query));
   }, [options, query]);
 
   const updatePosition = useCallback(() => {
