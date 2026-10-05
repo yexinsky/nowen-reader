@@ -28,6 +28,7 @@ import {
   Brain,
   Wand2,
   Clapperboard,
+  Merge,
 } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
@@ -247,6 +248,22 @@ interface AISelectionEvent {
   };
 }
 
+/** AI 标签归一：响应中的标签条目 */
+interface AINormTag {
+  id: number;
+  name: string;
+  comicCount: number;
+}
+
+/** AI 标签归一：一组归并建议（变体 → 规范标签） */
+interface AINormGroup {
+  target: AINormTag;
+  sources: AINormTag[];
+  applied?: boolean;
+  comicCount?: number;
+  error?: string;
+}
+
 /** Resolve a tag color: DB default is "default", treat it as null */
 function resolveTagColor(color: string | undefined): string {
   if (!color || color === "default") return "#6b7280";
@@ -344,11 +361,14 @@ export default function TagManagerPage() {
 
   // AI 智能生成
   const [showAIPanel, setShowAIPanel] = useState(false);
-  const [aiMode, setAiMode] = useState<"tags" | "categories">("tags");
+  const [aiMode, setAiMode] = useState<"tags" | "categories" | "normalize">("tags");
   const [aiRunning, setAiRunning] = useState(false);
   const [aiProgress, setAiProgress] = useState<{ current: number; total: number } | null>(null);
   const [aiResults, setAiResults] = useState<(AITagSuggestion | AICategorySuggestion)[]>([]);
   const [aiAutoApply, setAiAutoApply] = useState(false);
+  // AI 标签归一：分组建议 + 逐组合并忙碌态（组 targetId 或 "all"）
+  const [aiNormGroups, setAiNormGroups] = useState<AINormGroup[]>([]);
+  const [aiNormBusyKey, setAiNormBusyKey] = useState<string | null>(null);
 
   // 拖拽排序
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -772,6 +792,114 @@ export default function TagManagerPage() {
     }
   }, [aiRunning, aiMode, aiAutoApply, locale, showToast, loadData]);
 
+  // ── AI 标签归一 ──
+
+  const handleAINormalize = useCallback(async () => {
+    if (aiRunning) return;
+    setAiRunning(true);
+    setAiNormGroups([]);
+    try {
+      const res = await fetch(apiPath("/api/ai/suggest-tag-merges"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: aiAutoApply }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "AI 请求失败", "error");
+        return;
+      }
+      const groups: AINormGroup[] = data.groups || [];
+      setAiNormGroups(groups);
+      showToast(
+        groups.length > 0
+          ? `AI 归一分析完成：发现 ${groups.length} 组可归并标签`
+          : "AI 分析完成：未发现可归并的标签变体",
+        "success"
+      );
+      if (aiAutoApply) await loadData();
+    } catch (e) {
+      showToast(`AI 归一分析失败: ${String(e)}`, "error");
+    } finally {
+      setAiRunning(false);
+    }
+  }, [aiRunning, aiAutoApply, showToast, loadData]);
+
+  /** 对第 index 组执行合并（不改忙碌态）。成功返回实际迁移的书目数，失败返回 -1。 */
+  const applyNormGroupAt = useCallback(async (index: number): Promise<number> => {
+    const group = aiNormGroups[index];
+    if (!group || group.applied) return -1;
+    try {
+      const res = await fetch(apiPath("/api/tags/normalization/apply"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetTagId: group.target.id,
+          sourceTagIds: group.sources.map((s) => s.id),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = data.error || `HTTP ${res.status}`;
+        setAiNormGroups((prev) =>
+          prev.map((g, i) => (i === index ? { ...g, error: message } : g))
+        );
+        return -1;
+      }
+      setAiNormGroups((prev) =>
+        prev.map((g, i) => (i === index ? { ...g, applied: true, comicCount: data.comicCount } : g))
+      );
+      return typeof data.comicCount === "number" ? data.comicCount : 0;
+    } catch (e) {
+      setAiNormGroups((prev) =>
+        prev.map((g, i) => (i === index ? { ...g, error: String(e) } : g))
+      );
+      return -1;
+    }
+  }, [aiNormGroups]);
+
+  const applyAINormGroup = useCallback(async (index: number) => {
+    const group = aiNormGroups[index];
+    if (!group || group.applied || aiNormBusyKey) return;
+    setAiNormBusyKey(String(group.target.id));
+    const moved = await applyNormGroupAt(index);
+    setAiNormBusyKey(null);
+    if (moved >= 0) {
+      showToast(`已归并到「${group.target.name}」，处理 ${moved} 本`, "success");
+      await loadData();
+    } else {
+      showToast("归并失败", "error");
+    }
+  }, [aiNormGroups, aiNormBusyKey, applyNormGroupAt, showToast, loadData]);
+
+  const applyAllAINormGroups = useCallback(async () => {
+    if (aiNormBusyKey) return;
+    const pending = aiNormGroups
+      .map((g, i) => ({ g, i }))
+      .filter(({ g }) => !g.applied && !g.error);
+    if (pending.length === 0) return;
+    setAiNormBusyKey("all");
+    let success = 0;
+    let movedTotal = 0;
+    for (const { i } of pending) {
+      const moved = await applyNormGroupAt(i);
+      if (moved >= 0) {
+        success++;
+        movedTotal += moved;
+      }
+    }
+    setAiNormBusyKey(null);
+    if (success === pending.length) {
+      showToast(`已全部归并（${success} 组，${movedTotal} 本）`, "success");
+    } else {
+      showToast(
+        `归并完成：${success}/${pending.length} 组成功，失败组见错误提示`,
+        success > 0 ? "success" : "error"
+      );
+    }
+    await loadData();
+  }, [aiNormGroups, aiNormBusyKey, applyNormGroupAt, showToast, loadData]);
+
   // ── Category actions ──
 
   const handleSaveCategory = async (slug: string) => {
@@ -1129,11 +1257,13 @@ export default function TagManagerPage() {
               </button>
             </div>
             <p className="text-xs text-muted">
-              基于书库中的漫画/小说内容，使用 AI 自动分析并推荐合适的标签或分类。
+              {aiMode === "normalize"
+                ? "AI 分析内容标签，找出语义完全相同的不同写法（译名、罗马音、繁简体、空格差异等）并给出归并建议。归并会写入别名并记入操作日志，可在标签归一工作台撤销。"
+                : "基于书库中的漫画/小说内容，使用 AI 自动分析并推荐合适的标签或分类。"}
             </p>
 
             {/* 模式选择 */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setAiMode("tags")}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -1155,6 +1285,17 @@ export default function TagManagerPage() {
               >
                 <Layers className="h-3 w-3" />
                 智能分类
+              </button>
+              <button
+                onClick={() => setAiMode("normalize")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  aiMode === "normalize"
+                    ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
+                    : "bg-card text-muted hover:text-foreground"
+                }`}
+              >
+                <Merge className="h-3 w-3" />
+                标签归一
               </button>
             </div>
 
@@ -1186,7 +1327,56 @@ export default function TagManagerPage() {
             )}
 
             {/* 结果列表 */}
-            {aiResults.length > 0 && (
+            {aiMode === "normalize" ? (
+              aiNormGroups.length > 0 && (
+                <div className="max-h-64 overflow-y-auto space-y-1.5 rounded-xl border border-border/30 p-2" style={{ scrollbarWidth: "thin" }}>
+                  {aiNormGroups.map((g, i) => {
+                    const busy = aiNormBusyKey === String(g.target.id) || aiNormBusyKey === "all";
+                    const pendingAll = aiNormGroups.filter((x) => !x.applied && !x.error).length;
+                    return (
+                      <div
+                        key={`${g.target.id}-${i}`}
+                        className={`rounded-lg p-2 text-xs ${
+                          g.error
+                            ? "border border-red-500/20 bg-red-500/5"
+                            : "border border-border/40 bg-background"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-1">
+                          {g.sources.map((s) => (
+                            <span key={s.id} className="rounded bg-muted/10 px-1.5 py-0.5 text-[10px] text-foreground">
+                              {s.name} <span className="text-[10px] text-muted">{s.comicCount}</span>
+                            </span>
+                          ))}
+                          <span className="text-muted">→</span>
+                          <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
+                            {g.target.name} <span className="text-[10px]">{g.target.comicCount}</span>
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          {g.applied ? (
+                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400">
+                              已归并 · {g.comicCount ?? 0} 本
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => applyAINormGroup(i)}
+                              disabled={busy || pendingAll === 0}
+                              className="flex items-center gap-1 rounded bg-purple-500 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-purple-600 disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Merge className="h-2.5 w-2.5" />}
+                              合并
+                            </button>
+                          )}
+                          {g.error && <span className="text-[10px] text-red-400/70">{g.error}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              aiResults.length > 0 && (
               <div className="max-h-48 overflow-y-auto space-y-1 rounded-xl border border-border/30 p-2" style={{ scrollbarWidth: "thin" }}>
                 {aiResults.map((r, i) => (
                   <div
@@ -1219,12 +1409,13 @@ export default function TagManagerPage() {
                   </div>
                 ))}
               </div>
+              )
             )}
 
             {/* 操作按钮 */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={handleAIGenerate}
+                onClick={aiMode === "normalize" ? handleAINormalize : handleAIGenerate}
                 disabled={aiRunning}
                 className="flex items-center gap-1.5 rounded-lg bg-purple-500 px-4 py-2 text-xs font-medium text-white hover:bg-purple-600 transition-colors disabled:opacity-50"
               >
@@ -1233,18 +1424,39 @@ export default function TagManagerPage() {
                 ) : (
                   <Wand2 className="h-3.5 w-3.5" />
                 )}
-                {aiRunning ? "生成中..." : `开始 AI ${aiMode === "tags" ? "标签" : "分类"}生成`}
+                {aiRunning
+                  ? aiMode === "normalize" ? "分析中..." : "生成中..."
+                  : aiMode === "normalize" ? "开始 AI 归一分析" : `开始 AI ${aiMode === "tags" ? "标签" : "分类"}生成`}
               </button>
-              {aiResults.length > 0 && !aiRunning && (
+              {aiMode === "normalize" && aiNormGroups.some((g) => !g.applied && !g.error) && !aiRunning && (
                 <button
-                  onClick={() => setAiResults([])}
+                  onClick={applyAllAINormGroups}
+                  disabled={!!aiNormBusyKey}
+                  className="flex items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-2 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/20 disabled:opacity-50"
+                >
+                  {aiNormBusyKey === "all" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Merge className="h-3.5 w-3.5" />
+                  )}
+                  全部合并
+                </button>
+              )}
+              {(aiMode === "normalize" ? aiNormGroups.length > 0 : aiResults.length > 0) && !aiRunning && (
+                <button
+                  onClick={() => {
+                    setAiResults([]);
+                    setAiNormGroups([]);
+                  }}
                   className="text-xs text-muted hover:text-foreground"
                 >
                   清除结果
                 </button>
               )}
               <span className="text-[10px] text-muted ml-auto">
-                {aiMode === "tags" ? "将为缺少标签的作品生成建议（最多30本）" : "将为未分类作品生成建议（最多30本）"}
+                {aiMode === "normalize"
+                  ? "AI 将分析使用最多的前 800 个内容标签（已忽略簇除外）"
+                  : aiMode === "tags" ? "将为缺少标签的作品生成建议（最多30本）" : "将为未分类作品生成建议（最多30本）"}
               </span>
             </div>
           </div>

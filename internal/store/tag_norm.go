@@ -506,6 +506,34 @@ type TagNormCluster struct {
 	TotalComics int          `json:"totalComics"`
 }
 
+// ListContentTagsWithCounts 返回全部内容标签（kind='tag'，作者标签不参与
+// 内容标签合并）及其关联书目数，id 升序。归一预览与 AI 归一分析共用。
+func ListContentTagsWithCounts() ([]TagVariant, error) {
+	// 标签量级千级：一条 JOIN 聚合
+	rows, err := db.Query(
+		`SELECT t."id", t."name", COUNT(ct."comicId")
+		 FROM "Tag" t
+		 LEFT JOIN "ComicTag" ct ON ct."tagId" = t."id"
+		 WHERE COALESCE(t."kind", 'tag') = 'tag'
+		 GROUP BY t."id"
+		 ORDER BY t."id" ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tags := []TagVariant{}
+	for rows.Next() {
+		var v TagVariant
+		if err := rows.Scan(&v.ID, &v.Name, &v.ComicCount); err != nil {
+			return nil, err
+		}
+		tags = append(tags, v)
+	}
+	return tags, rows.Err()
+}
+
 // PreviewTagNormalization 返回同 normKey 且变体数 > 1 的标签簇，
 // 排除已忽略的 normKey 与作者标签（作者名变体不参与内容标签合并），
 // 按 totalComics 降序，内存分页。
@@ -520,36 +548,10 @@ func PreviewTagNormalization(page, pageSize int) ([]TagNormCluster, int, error) 
 		pageSize = 200
 	}
 
-	// 标签量级千级：一条 JOIN 聚合后内存分组（作者标签不参与内容标签合并，排除）
-	type tagRow struct {
-		id, count int
-		name      string
-	}
-	var tags []tagRow
-	rows, err := db.Query(
-		`SELECT t."id", t."name", COUNT(ct."comicId")
-		 FROM "Tag" t
-		 LEFT JOIN "ComicTag" ct ON ct."tagId" = t."id"
-		 WHERE COALESCE(t."kind", 'tag') = 'tag'
-		 GROUP BY t."id"
-		 ORDER BY t."id" ASC`,
-	)
+	tags, err := ListContentTagsWithCounts()
 	if err != nil {
 		return nil, 0, err
 	}
-	for rows.Next() {
-		var r tagRow
-		if err := rows.Scan(&r.id, &r.name, &r.count); err != nil {
-			rows.Close()
-			return nil, 0, err
-		}
-		tags = append(tags, r)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, 0, err
-	}
-	rows.Close()
 
 	ignored := make(map[string]bool)
 	irows, err := db.Query(`SELECT "normKey" FROM "TagNormIgnore"`)
@@ -570,11 +572,11 @@ func PreviewTagNormalization(page, pageSize int) ([]TagNormCluster, int, error) 
 	grouped := make(map[string][]TagVariant)
 	order := []string{} // 保持首次出现顺序，保证输出确定
 	for _, t := range tags {
-		key := TagNormKey(t.name)
+		key := TagNormKey(t.Name)
 		if _, ok := grouped[key]; !ok {
 			order = append(order, key)
 		}
-		grouped[key] = append(grouped[key], TagVariant{ID: t.id, Name: t.name, ComicCount: t.count})
+		grouped[key] = append(grouped[key], t)
 	}
 
 	clusters := []TagNormCluster{}

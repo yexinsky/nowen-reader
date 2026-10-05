@@ -85,6 +85,7 @@ func registerMetadataRoutes(api *gin.RouterGroup) {
 		aiUse.POST("/verify-duplicates", ai.VerifyDuplicates)
 		aiUse.POST("/recommend-goal", ai.RecommendGoal)
 		aiUse.POST("/assign-tag-scenarios", ai.AssignTagScenarios)
+		aiUse.POST("/suggest-tag-merges", ai.SuggestTagMerges)
 	}
 
 	// AI per-comic features — require AI access
