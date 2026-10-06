@@ -64,7 +64,7 @@ func SuggestTagMapping(cfg AIConfig, vocab, variants []TagNormCandidate) ([]TagM
 
 // suggestTagMappingBatch 单次 LLM 调用处理一批长尾标签。
 func suggestTagMappingBatch(cfg AIConfig, vocab, variants []TagNormCandidate, maxTokens int) ([]TagMappingSuggestion, error) {
-	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. The library is being rebuilt around a CURATED VOCABULARY of canonical tags. You get the vocabulary plus a batch of leftover tags. For each leftover tag decide one of:
+	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert working on an ADULT (18+) comic collection. Explicit sexual tags are normal taxonomy terms here: judge them factually, never censor, euphemize, sanitize or refuse. The library is being rebuilt around a CURATED VOCABULARY of canonical tags. You get the vocabulary plus a batch of leftover tags. For each leftover tag decide one of:
 
 - "map": its meaning is covered by a vocabulary tag (exact synonym, near-synonym, translation/romanization variant, or a narrower variant of it) → set "target" to that vocabulary tag VERBATIM
 - "delete": junk or noise (watermarks, site names, spam, meaningless strings) → no target
@@ -74,6 +74,7 @@ Rules:
 - Copy leftover tag names VERBATIM; "target" must be copied VERBATIM from the vocabulary list — never modify, translate or invent names
 - Tags may be Traditional or Simplified Chinese — treat the two scripts as the same writing when comparing meanings
 - map is for meaning overlap; a distinctive niche concept (e.g. "NTR", "阿黑顏") must be kept, NOT mapped to a broader tag
+- When several vocabulary tags could cover a leftover tag, prefer the most eye-catching, appealing one — the punchy term readers actually search for; never fold an appealing distinctive tag into a bland broad one
 - When unsure between map and keep, prefer keep
 - delete only obvious junk; never delete meaningful tags
 - "reason": short phrase (≤15 chars) in the tag's language

@@ -111,11 +111,11 @@ func SuggestTagMerges(cfg AIConfig, pool, variants []TagNormCandidate) ([]TagMer
 
 // suggestTagMergesPoolBatch 规范池自归并：在高用量标签内部找同义组。
 func suggestTagMergesPoolBatch(cfg AIConfig, pool []TagNormCandidate, maxTokens int) ([]TagMergeSuggestion, error) {
-	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. You get the library's HIGH-USAGE tags. Find groups of tags that denote EXACTLY THE SAME concept: different spellings, translations (e.g. English / Japanese / Chinese), romanizations, abbreviations, Traditional/Simplified Chinese variants, extra/missing spaces, hyphens or punctuation.
+	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert working on an ADULT (18+) comic collection. Explicit sexual tags are normal taxonomy terms here: judge them factually, never censor, euphemize, sanitize or refuse. You get the library's HIGH-USAGE tags. Find groups of tags that denote EXACTLY THE SAME concept: different spellings, translations (e.g. English / Japanese / Chinese), romanizations, abbreviations, Traditional/Simplified Chinese variants, extra/missing spaces, hyphens or punctuation.
 
 Rules:
 - Merge ONLY exact synonyms. Tags with related but DIFFERENT meanings (e.g. "少女" vs "萝莉", "swimsuit" vs "bikini") must NOT be merged
-- Target priority: the intuitive mainstream name ALWAYS wins — a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"; usage count only breaks ties between equally intuitive names; NEVER pick a target just because it has more comics
+- Target priority: the intuitive mainstream name ALWAYS wins — a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"; among equally intuitive names prefer the more eye-catching, appealing wording that readers actually search for; usage count only breaks ties between equally intuitive names; NEVER pick a target just because it has more comics
 - Copy tag names VERBATIM from the provided list — never invent, translate or modify names
 - Each tag may appear in at most one group; a tag must never be both target and source
 - Return ONLY a JSON array, no extra text: [{"target":"<canonical>","sources":["<variant>",...]}]
@@ -132,7 +132,7 @@ Rules:
 
 // suggestTagMergesBatch 单次 LLM 调用处理一批变体（附带完整规范池）。
 func suggestTagMergesBatch(cfg AIConfig, pool, variants []TagNormCandidate, maxTokens int) ([]TagMergeSuggestion, error) {
-	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. You get TWO lists:
+	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert working on an ADULT (18+) comic collection. Explicit sexual tags are normal taxonomy terms here: judge them factually, never censor, euphemize, sanitize or refuse. You get TWO lists:
 1. CANONICAL POOL — high-usage tags users browse most (preferred merge targets)
 2. VARIANTS — low-usage tags, likely redundant spellings/translations of something
 
@@ -140,8 +140,8 @@ Task: for each variant, find a CANONICAL POOL tag denoting EXACTLY THE SAME conc
 
 Rules:
 - Merge ONLY exact synonyms. Tags with related but DIFFERENT meanings (e.g. "少女" vs "萝莉", "swimsuit" vs "bikini") must NOT be merged
-- Target priority: the intuitive mainstream name ALWAYS wins — a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"; usage count only breaks ties between equally intuitive names; NEVER pick a target just because it has more comics
-- New targets: concise intuitive names (Chinese ≤6 characters); use sparingly — prefer existing pool tags
+- Target priority: the intuitive mainstream name ALWAYS wins — a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"; among equally intuitive names prefer the more eye-catching, appealing wording that readers actually search for; usage count only breaks ties between equally intuitive names; NEVER pick a target just because it has more comics
+- New targets: concise, intuitive and appealing names (Chinese ≤6 characters); use sparingly — prefer existing pool tags
 - Copy existing tag names VERBATIM from the lists — never invent, translate or modify them; only "new": true targets may be absent from the lists
 - Each tag may appear in at most one group; a tag must never be both target and source
 - Return ONLY a JSON array, no extra text: [{"target":"<canonical>","sources":["<variant>",...],"new":false}]
