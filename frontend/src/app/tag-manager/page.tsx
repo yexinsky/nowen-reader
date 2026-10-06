@@ -25,13 +25,12 @@ import {
   Sparkles,
   Loader2,
   GripVertical,
-  Brain,
   Wand2,
   Clapperboard,
   Merge,
   ListChecks,
 } from "lucide-react";
-import { useTranslation, useLocale } from "@/lib/i18n";
+import { useTranslation } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
 import { tagMatchesQuery } from "@/lib/tagNorm";
 import { PageContent, PageHeader } from "@/components/PageHeader";
@@ -224,31 +223,6 @@ async function apiReorderCategories(orders: { slug: string; sortOrder: number }[
   }
 }
 
-/** AI 批量标签建议结果项 */
-interface AITagSuggestion {
-  comicId: string;
-  title: string;
-  suggestedTags?: string[];
-  applied?: boolean;
-  error?: string;
-}
-
-/** AI 批量分类建议结果项 */
-interface AICategorySuggestion {
-  comicId: string;
-  title: string;
-  suggestedCategories?: string[];
-  applied?: boolean;
-  error?: string;
-}
-
-interface AISelectionEvent {
-  selection: {
-    eligible: number;
-    selected: number;
-  };
-}
-
 /** AI 标签归一：响应中的标签条目 */
 interface AINormTag {
   id: number;
@@ -370,13 +344,9 @@ export default function TagManagerPage() {
   const [newCatName, setNewCatName] = useState("");
   const [newCatIcon, setNewCatIcon] = useState("📚");
 
-  // AI 智能生成
-  const [showAIPanel, setShowAIPanel] = useState(false);
-  const [aiMode, setAiMode] = useState<"tags" | "categories" | "normalize" | "mapping">("tags");
+  // AI 标签整理（归一 / 词表映射）
+  const [aiMode, setAiMode] = useState<"normalize" | "mapping">("normalize");
   const [aiRunning, setAiRunning] = useState(false);
-  const [aiProgress, setAiProgress] = useState<{ current: number; total: number } | null>(null);
-  const [aiResults, setAiResults] = useState<(AITagSuggestion | AICategorySuggestion)[]>([]);
-  const [aiAutoApply, setAiAutoApply] = useState(false);
   // AI 标签归一：分组建议 + 逐组合并忙碌态（组 targetId 或 "all"）
   const [aiNormGroups, setAiNormGroups] = useState<AINormGroup[]>([]);
   const [aiNormBusyKey, setAiNormBusyKey] = useState<string | null>(null);
@@ -713,112 +683,18 @@ export default function TagManagerPage() {
     setDragOverIndex(null);
   };
 
-  // ── AI 智能生成 ──
-
-  const { locale } = useLocale();
-
-  const handleAIGenerate = useCallback(async () => {
-    if (aiRunning) return;
-    setAiRunning(true);
-    setAiResults([]);
-    setAiProgress(null);
-
-    try {
-      const endpoint = aiMode === "tags"
-        ? "/api/ai/batch-suggest-tags"
-        : "/api/ai/batch-suggest-category";
-
-      const res = await fetch(apiPath(endpoint), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          selector: {
-            scope: aiMode === "tags" ? "missing" : "uncategorized",
-            limit: 30,
-          },
-          targetLang: locale || "zh",
-          apply: aiAutoApply,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || "AI 请求失败", "error");
-        setAiRunning(false);
-        return;
-      }
-
-      // SSE 流式读取
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const results: (AITagSuggestion | AICategorySuggestion)[] = [];
-      let eligibleCount = 0;
-      let selectedCount = 0;
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.selection) {
-                  const selection = (data as AISelectionEvent).selection;
-                  eligibleCount = selection.eligible;
-                  selectedCount = selection.selected;
-                  setAiProgress(selection.selected > 0 ? { current: 0, total: selection.selected } : null);
-                  continue;
-                }
-                if (data.done) {
-                  continue;
-                }
-                results.push(data as AITagSuggestion | AICategorySuggestion);
-                setAiResults([...results]);
-                setAiProgress({ current: (data.index || 0) + 1, total: data.total || selectedCount });
-              } catch {
-                // ignore parse errors
-              }
-            }
-          }
-        }
-      }
-
-      if (selectedCount === 0) {
-        showToast(aiMode === "tags" ? "所有作品都已有标签" : "所有作品都已分类", "success");
-      } else {
-        const remaining = Math.max(0, eligibleCount - selectedCount);
-        showToast(
-          `AI ${aiMode === "tags" ? "标签" : "分类"}建议完成：${results.filter((r) => !r.error).length} 成功${remaining > 0 ? `，另有 ${remaining} 本待处理` : ""}`,
-          "success"
-        );
-      }
-      await loadData();
-    } catch (e) {
-      showToast(`AI 生成失败: ${String(e)}`, "error");
-    } finally {
-      setAiRunning(false);
-      setAiProgress(null);
-    }
-  }, [aiRunning, aiMode, aiAutoApply, locale, showToast, loadData]);
-
-  // ── AI 标签归一 ──
+  // ── AI 标签整理：归一分析 / 词表映射 ──
 
   const handleAINormalize = useCallback(async () => {
     if (aiRunning) return;
+    setAiMode("normalize");
     setAiRunning(true);
     setAiNormGroups([]);
     try {
       const res = await fetch(apiPath("/api/ai/suggest-tag-merges"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apply: aiAutoApply }),
+        body: JSON.stringify({ apply: false }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -833,13 +709,12 @@ export default function TagManagerPage() {
           : "AI 分析完成：未发现可归并的标签变体",
         "success"
       );
-      if (aiAutoApply) await loadData();
     } catch (e) {
       showToast(`AI 归一分析失败: ${String(e)}`, "error");
     } finally {
       setAiRunning(false);
     }
-  }, [aiRunning, aiAutoApply, showToast, loadData]);
+  }, [aiRunning, showToast]);
 
   /** 对第 index 组执行合并（不改忙碌态）。成功返回实际迁移的书目数，失败返回 -1。 */
   const applyNormGroupAt = useCallback(async (index: number): Promise<number> => {
@@ -921,6 +796,7 @@ export default function TagManagerPage() {
 
   const handleAIMapping = useCallback(async () => {
     if (aiRunning) return;
+    setAiMode("mapping");
     setAiRunning(true);
     setAiMappings([]);
     setAiMappingChecked(new Set());
@@ -1292,20 +1168,6 @@ export default function TagManagerPage() {
         icon={Tag}
         actions={
           <>
-          {isAdmin && (
-            <button
-              onClick={() => setShowAIPanel(!showAIPanel)}
-              className={`flex h-8 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition-all ${
-                showAIPanel
-                  ? "border-purple-500/40 bg-purple-500/10 text-purple-400"
-                  : "border-border/50 text-muted hover:border-purple-500/40 hover:text-purple-400"
-              }`}
-              title="AI 智能生成"
-            >
-              <Brain className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">AI 智能生成</span>
-            </button>
-          )}
           <button
             onClick={() => { loadData(); showToast(t.tagManager?.refreshed || "已刷新", "success"); }}
             className="flex h-8 w-8 items-center justify-center rounded-xl border border-border/50 text-muted transition-all hover:border-accent/40 hover:text-accent"
@@ -1362,112 +1224,43 @@ export default function TagManagerPage() {
           )}
         </div>
 
-        {/* 标签归一工作台 */}
+        {/* AI 标签整理（管理员）：归一分析 + 词表映射，建议在下方复核应用 */}
         {activeTab === "tags" && isAdmin && (
-          <TagNormalizationPanel tags={contentTags} onDataChanged={loadData} />
-        )}
-
-        {/* AI 智能生成面板 */}
-        {showAIPanel && isAdmin && (
-          <div className="mb-4 rounded-2xl border border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-blue-500/5 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-purple-400" />
-                <h3 className="text-sm font-semibold text-foreground">AI 智能生成</h3>
+          <div className="mb-4 rounded-2xl border border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-blue-500/5 p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <div className="mr-auto flex min-w-0 items-start gap-2">
+                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-purple-400" />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-foreground">AI 标签整理</h3>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted">
+                    归一分析：把同义变体（译名、繁简体、罗马音、空格差异等）并入高用量的主流写法，都不合适时建议新建更规范的标签。
+                    词表映射：先在下方「标签归一工作台 → 词表」定好目标词表，AI 再把词表外的长尾标签逐个判定为归入或删除。
+                    应用前自动创建快照，归并写入别名、可在工作台撤销。
+                  </p>
+                </div>
               </div>
               <button
-                onClick={() => setShowAIPanel(false)}
-                className="rounded-lg p-1 text-muted hover:text-foreground"
+                onClick={handleAINormalize}
+                disabled={aiRunning}
+                className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-purple-500 px-3 text-xs font-medium text-white transition-colors hover:bg-purple-600 disabled:opacity-50"
+                title="把低用量变体归入高用量主流标签；结果逐组复核后应用"
               >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <p className="text-xs text-muted">
-              {aiMode === "normalize"
-                ? "AI 以高用量标签为规范池，把低用量的变体（译名、罗马音、繁简体、空格差异等）归入其中；既有标签都不合适时会建议新建更规范的标签（卡片标注「新建」，合并时自动创建）。归并会写入别名并记入操作日志，可在标签归一工作台撤销。"
-                : aiMode === "mapping"
-                ? "词表驱动式重构：先在「标签归一工作台 → 词表」页签定好几十个规范目标，AI 再把词表外的长尾标签逐个判定——归入某个词表标签、或标记为垃圾待删（没提到的默认保留）。归并类默认勾选，删除类需你手动勾选；应用前自动创建快照。"
-                : "基于书库中的漫画/小说内容，使用 AI 自动分析并推荐合适的标签或分类。"}
-            </p>
-
-            {/* 模式选择 */}
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setAiMode("tags")}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  aiMode === "tags"
-                    ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
-                    : "bg-card text-muted hover:text-foreground"
-                }`}
-              >
-                <Tag className="h-3 w-3" />
-                智能标签
+                {aiRunning && aiMode === "normalize" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Merge className="h-3.5 w-3.5" />}
+                {aiRunning && aiMode === "normalize" ? "归一分析中..." : "AI 归一分析"}
               </button>
               <button
-                onClick={() => setAiMode("categories")}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  aiMode === "categories"
-                    ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
-                    : "bg-card text-muted hover:text-foreground"
-                }`}
+                onClick={handleAIMapping}
+                disabled={aiRunning}
+                className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/20 disabled:opacity-50"
+                title="按目标词表重构长尾标签；词表为空时会提示先到「词表」页签构建"
               >
-                <Layers className="h-3 w-3" />
-                智能分类
-              </button>
-              <button
-                onClick={() => setAiMode("normalize")}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  aiMode === "normalize"
-                    ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
-                    : "bg-card text-muted hover:text-foreground"
-                }`}
-              >
-                <Merge className="h-3 w-3" />
-                标签归一
-              </button>
-              <button
-                onClick={() => setAiMode("mapping")}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  aiMode === "mapping"
-                    ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
-                    : "bg-card text-muted hover:text-foreground"
-                }`}
-              >
-                <ListChecks className="h-3 w-3" />
-                词表映射
+                {aiRunning && aiMode === "mapping" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />}
+                {aiRunning && aiMode === "mapping" ? "映射分析中..." : "AI 词表映射分析"}
               </button>
             </div>
 
-            {/* 选项 */}
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={aiAutoApply}
-                onChange={(e) => setAiAutoApply(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-purple-500"
-              />
-              <span className="text-xs text-muted">自动应用建议结果</span>
-            </label>
-
-            {/* 进度 */}
-            {aiRunning && aiProgress && (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2 text-xs text-purple-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>正在分析... {aiProgress.current}/{aiProgress.total}</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-purple-500/10 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-purple-500 transition-all duration-300"
-                    style={{ width: `${(aiProgress.current / aiProgress.total) * 100}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* 结果列表 */}
-            {aiMode === "normalize" ? (
-              aiNormGroups.length > 0 && (
+            {/* 归一分析建议 */}
+            {aiNormGroups.length > 0 && (
                 <div className="max-h-64 overflow-y-auto space-y-1.5 rounded-xl border border-border/30 p-2" style={{ scrollbarWidth: "thin" }}>
                   {aiNormGroups.map((g, i) => {
                     const busy = aiNormBusyKey === String(g.target.id) || aiNormBusyKey === "all";
@@ -1519,10 +1312,11 @@ export default function TagManagerPage() {
                     );
                   })}
                 </div>
-              )
-            ) : aiMode === "mapping" ? (
-              aiMappings.length > 0 &&
-              (() => {
+            )}
+
+            {/* 词表映射建议 */}
+            {aiMappings.length > 0 &&
+            (() => {
                 const mapCount = aiMappings.filter((m) => m.action === "map").length;
                 const delCount = aiMappings.filter((m) => m.action === "delete").length;
                 const visible = aiMappings
@@ -1603,71 +1397,11 @@ export default function TagManagerPage() {
                     </div>
                   </div>
                 );
-              })()
-            ) : (
-              aiResults.length > 0 && (
-              <div className="max-h-48 overflow-y-auto space-y-1 rounded-xl border border-border/30 p-2" style={{ scrollbarWidth: "thin" }}>
-                {aiResults.map((r, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-lg p-2 text-xs ${
-                      r.error
-                        ? "bg-red-500/5 border border-red-500/20"
-                        : "bg-emerald-500/5 border border-emerald-500/20"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-foreground truncate">{r.title || r.comicId}</span>
-                      {r.applied && (
-                        <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded flex-shrink-0">
-                          已应用
-                        </span>
-                      )}
-                    </div>
-                    {r.error ? (
-                      <div className="text-[11px] text-red-400/70 mt-0.5">{r.error}</div>
-                    ) : (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {(("suggestedTags" in r ? r.suggestedTags : undefined) || ("suggestedCategories" in r ? r.suggestedCategories : undefined) || []).map((tag) => (
-                          <span key={tag} className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-400">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              )
-            )}
+              })()}
 
             {/* 操作按钮 */}
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={
-                  aiMode === "normalize"
-                    ? handleAINormalize
-                    : aiMode === "mapping"
-                    ? handleAIMapping
-                    : handleAIGenerate
-                }
-                disabled={aiRunning}
-                className="flex items-center gap-1.5 rounded-lg bg-purple-500 px-4 py-2 text-xs font-medium text-white hover:bg-purple-600 transition-colors disabled:opacity-50"
-              >
-                {aiRunning ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Wand2 className="h-3.5 w-3.5" />
-                )}
-                {aiRunning
-                  ? aiMode === "normalize" || aiMode === "mapping" ? "分析中..." : "生成中..."
-                  : aiMode === "normalize"
-                  ? "开始 AI 归一分析"
-                  : aiMode === "mapping"
-                  ? "开始词表映射分析"
-                  : `开始 AI ${aiMode === "tags" ? "标签" : "分类"}生成`}
-              </button>
-              {aiMode === "normalize" && aiNormGroups.some((g) => !g.applied && !g.error) && !aiRunning && (
+              {aiNormGroups.some((g) => !g.applied && !g.error) && !aiRunning && (
                 <button
                   onClick={applyAllAINormGroups}
                   disabled={!!aiNormBusyKey}
@@ -1681,7 +1415,7 @@ export default function TagManagerPage() {
                   全部合并
                 </button>
               )}
-              {aiMode === "mapping" && aiMappings.length > 0 && !aiRunning && (
+              {aiMappings.length > 0 && !aiRunning && (
                 <button
                   onClick={applyAIMappings}
                   disabled={aiMappingApplying || aiMappingChecked.size === 0}
@@ -1696,10 +1430,9 @@ export default function TagManagerPage() {
                   应用选中（{aiMappingChecked.size}）
                 </button>
               )}
-              {(aiMode === "normalize" ? aiNormGroups.length > 0 : aiMode === "mapping" ? aiMappings.length > 0 : aiResults.length > 0) && !aiRunning && (
+              {(aiNormGroups.length > 0 || aiMappings.length > 0) && !aiRunning && (
                 <button
                   onClick={() => {
-                    setAiResults([]);
                     setAiNormGroups([]);
                     setAiMappings([]);
                     setAiMappingChecked(new Set());
@@ -1712,12 +1445,15 @@ export default function TagManagerPage() {
               <span className="text-[10px] text-muted ml-auto">
                 {aiMode === "normalize"
                   ? "AI 将分析使用最多的前 2000 个内容标签（已忽略簇除外），先在规范池内互配，再把低用量变体归入池中"
-                  : aiMode === "mapping"
-                  ? "分析词表外的全部长尾标签（最多 3000 个），归并默认勾选、删除需手动勾选"
-                  : aiMode === "tags" ? "将为缺少标签的作品生成建议（最多30本）" : "将为未分类作品生成建议（最多30本）"}
+                  : "分析词表外的全部长尾标签（最多 3000 个），归并默认勾选、删除需手动勾选"}
               </span>
             </div>
           </div>
+        )}
+
+        {/* 标签归一工作台：手动归并/操作日志/别名/词表/过滤 */}
+        {activeTab === "tags" && isAdmin && (
+          <TagNormalizationPanel tags={contentTags} onDataChanged={loadData} />
         )}
 
         {/* Search + Sort + Actions Bar */}
