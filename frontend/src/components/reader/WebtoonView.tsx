@@ -71,7 +71,6 @@ export default function WebtoonView({
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const panStartRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const isPanningRef = useRef(false);
-  const lastTapTimeRef = useRef(0);
   const touchHandledRef = useRef(false);
   const pinchStartDistRef = useRef<number | null>(null);
   const pinchStartScaleRef = useRef(1);
@@ -208,7 +207,7 @@ export default function WebtoonView({
     }
   }, []);
 
-  // Touch gesture handlers for double-tap zoom, pinch-to-zoom, and pan
+  // Touch gesture handlers for pinch-to-zoom and pan
   const getTouchDistance = (touches: React.TouchList): number => {
     const dx = touches[0].clientX - touches[1].clientX;
     const dy = touches[0].clientY - touches[1].clientY;
@@ -275,42 +274,12 @@ export default function WebtoonView({
 
     panStartRef.current = null;
 
-    // Double-tap detection (only when not pinching)
-    const now = Date.now();
-    if (now - lastTapTimeRef.current < 300 && e.changedTouches.length === 1) {
-      lastTapTimeRef.current = 0;
-      touchHandledRef.current = true;
-      setTimeout(() => { touchHandledRef.current = false; }, 400);
-
-      if (scale > 1) {
-        setScale(1);
-        setTranslate({ x: 0, y: 0 });
-      } else {
-        setScale(2);
-        setTranslate({ x: 0, y: 0 });
-      }
-    } else {
-      lastTapTimeRef.current = now;
-    }
-
     // Reset panning state after a short delay
     setTimeout(() => { isPanningRef.current = false; }, 50);
   }, [scale]);
 
-  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (scale > 1) {
-      setScale(1);
-      setTranslate({ x: 0, y: 0 });
-    } else {
-      setScale(2);
-      setTranslate({ x: 0, y: 0 });
-    }
-  };
-
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Ignore clicks that follow a pan or double-tap gesture
+    // Ignore clicks that follow a pan or pinch gesture
     if (isPanningRef.current || touchHandledRef.current) return;
     if (scale > 1) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -336,11 +305,12 @@ export default function WebtoonView({
       }`}
       onScroll={handleScroll}
       onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      style={scale > 1 ? { touchAction: "none" } : undefined}
+      // 未放大时 pan-y：允许竖向滚动，同时禁掉浏览器原生双击缩放（iOS 不理会 user-scalable=no）；
+      // 放大后交给自定义手势，禁用所有浏览器默认手势
+      style={{ touchAction: scale > 1 ? "none" : "pan-y" }}
     >
       <div
         className="mx-auto"
