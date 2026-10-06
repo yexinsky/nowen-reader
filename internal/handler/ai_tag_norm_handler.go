@@ -157,7 +157,12 @@ func (h *AIHandler) SuggestTagMerges(c *gin.Context) {
 
 	groups := validateTagMergeGroups(suggestions, candidates)
 
-	if body.Apply {
+	if body.Apply && len(groups) > 0 {
+		// 将要合并标签 → 先落一份可恢复的域快照（失败则拒绝执行）
+		if err := autoSnapshotForAI("AI 归并应用前"); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "自动快照失败，已取消本次 AI 写操作: " + err.Error()})
+			return
+		}
 		for i := range groups {
 			sourceIDs := make([]int, len(groups[i].Sources))
 			for j, s := range groups[i].Sources {

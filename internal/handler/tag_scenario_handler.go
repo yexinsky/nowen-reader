@@ -220,6 +220,14 @@ func (h *AIHandler) AssignTagScenarios(c *gin.Context) {
 		pending[scenario.ID] = append(pending[scenario.ID], tag.ID)
 	}
 
+	// 将要写 Tag.scenarioId → 先落一份可恢复的域快照（失败则拒绝执行）
+	if len(pending) > 0 {
+		if err := autoSnapshotForAI("AI 情景分配前"); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "自动快照失败，已取消本次 AI 写操作: " + err.Error()})
+			return
+		}
+	}
+
 	assignments := []gin.H{}
 	assignedTagIDs := make(map[int]bool)
 	for scenarioID, ids := range pending {

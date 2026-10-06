@@ -28,6 +28,7 @@ import {
 } from "@/api/admin";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import ThumbnailMaintenancePanel from "@/components/ThumbnailMaintenancePanel";
+import TagSnapshotPanel from "@/components/TagSnapshotPanel";
 
 // ============================================================
 // 子组件
@@ -365,6 +366,9 @@ export default function DataAdminPage() {
         </div>
 
         <ThumbnailMaintenancePanel />
+
+        {/* 快照管理（标签+分类域） */}
+        <TagSnapshotPanel />
 
         {/* 缓存管理 */}
         <section className="mt-6 rounded-lg border border-border bg-card">

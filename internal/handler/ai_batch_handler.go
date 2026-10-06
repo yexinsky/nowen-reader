@@ -35,6 +35,14 @@ func (h *AIHandler) BatchSuggestTags(c *gin.Context) {
 		return
 	}
 
+	// 将要自动写入标签 → 先落一份可恢复的域快照（失败则拒绝执行）
+	if body.Apply {
+		if err := autoSnapshotForAI("AI 批量标签应用前"); err != nil {
+			c.JSON(500, gin.H{"error": "自动快照失败，已取消本次 AI 写操作: " + err.Error()})
+			return
+		}
+	}
+
 	// SSE 流式返回，逐条推送
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")

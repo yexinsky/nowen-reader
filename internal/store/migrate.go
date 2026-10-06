@@ -566,6 +566,25 @@ var Migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS "Tag_kind_idx" ON "Tag"("kind");`,
 		}, "\n"),
 	},
+	{
+		Version:     47,
+		Description: "Add Snapshot table for tag/category domain snapshots (restore safety net for AI batch writes)",
+		SQL: strings.Join([]string{
+			// 快照表：domain 区分快照范围（tag_category=标签+分类域），
+			// kind 区分手动/自动（自动快照滚动保留最近 N 份），data 为版本化 JSON 全量状态。
+			`CREATE TABLE IF NOT EXISTS "Snapshot" (
+				"id"        INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+				"domain"    TEXT NOT NULL DEFAULT 'tag_category',
+				"name"      TEXT NOT NULL,
+				"kind"      TEXT NOT NULL DEFAULT 'manual',
+				"reason"    TEXT NOT NULL DEFAULT '',
+				"summary"   TEXT NOT NULL DEFAULT '{}',
+				"data"      TEXT NOT NULL,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE INDEX IF NOT EXISTS "Snapshot_domain_createdAt_idx" ON "Snapshot"("domain", "createdAt" DESC);`,
+		}, "\n"),
+	},
 }
 
 // ensureMigrationsTable creates the migrations tracking table.

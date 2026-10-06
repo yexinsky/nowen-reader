@@ -201,6 +201,19 @@ func registerContentRoutes(api *gin.RouterGroup) {
 	}
 
 	// ============================================================
+	// 快照（标签+分类域，AI 批量写操作的安全网）— requires admin
+	// ============================================================
+	snap := NewSnapshotHandler()
+	snapGroup := api.Group("/snapshots")
+	snapGroup.Use(middleware.AdminRequired())
+	{
+		snapGroup.GET("", snap.List)
+		snapGroup.POST("", snap.Create)
+		snapGroup.POST("/:id/restore", snap.Restore)
+		snapGroup.DELETE("/:id", snap.Delete)
+	}
+
+	// ============================================================
 	// Thumbnail management — requires admin
 	// ============================================================
 	thumb := NewThumbnailHandler()

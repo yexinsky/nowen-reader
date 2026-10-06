@@ -225,6 +225,14 @@ func (h *AIHandler) BatchSuggestCategory(c *gin.Context) {
 		return
 	}
 
+	// 将要自动写入分类 → 先落一份可恢复的域快照（失败则拒绝执行）
+	if body.Apply {
+		if err := autoSnapshotForAI("AI 批量分类应用前"); err != nil {
+			c.JSON(500, gin.H{"error": "自动快照失败，已取消本次 AI 写操作: " + err.Error()})
+			return
+		}
+	}
+
 	// 获取可用分类
 	categories, err := store.GetAllCategories()
 	if err != nil || len(categories) == 0 {
