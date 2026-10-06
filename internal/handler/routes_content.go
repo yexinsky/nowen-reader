@@ -9,6 +9,7 @@ func registerContentRoutes(api *gin.RouterGroup) {
 	// Tags (Phase 2)
 	// ============================================================
 	tag := NewTagHandler()
+	tagVocab := NewTagVocabHandler()
 	tagsRead := api.Group("/tags")
 	tagsRead.Use(middleware.AuthRequired())
 	{
@@ -40,6 +41,14 @@ func registerContentRoutes(api *gin.RouterGroup) {
 		tagNormAdmin.POST("/undo", tag.UndoTagNormalization)
 		tagNormAdmin.POST("/ignore", tag.IgnoreTagNormKey)
 		tagNormAdmin.POST("/unignore", tag.UnignoreTagNormKey)
+	}
+
+	// 目标词表（词表驱动式标签重构）— 管理员
+	vocabAdmin := api.Group("/tags/vocabulary")
+	vocabAdmin.Use(middleware.AdminRequired())
+	{
+		vocabAdmin.GET("", tagVocab.List)
+		vocabAdmin.POST("", tagVocab.Update)
 	}
 
 	aliasesRead := api.Group("/tags/aliases")

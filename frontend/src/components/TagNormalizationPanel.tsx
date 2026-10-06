@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ListPlus,
   Loader2,
   Merge,
   RotateCcw,
@@ -81,6 +82,17 @@ interface IgnoreListResponse {
   list: IgnoreItem[];
 }
 
+interface VocabItem {
+  tagId: number;
+  name: string;
+  comicCount: number;
+  createdAt: string;
+}
+
+interface VocabListResponse {
+  list: VocabItem[];
+}
+
 type NormResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 const CLUSTER_PAGE_SIZE = 20;
@@ -121,7 +133,7 @@ function defaultTargetId(cluster: NormCluster): number {
   return sorted[0]?.id ?? 0;
 }
 
-type NormTab = "clusters" | "manual" | "operations" | "aliases";
+type NormTab = "clusters" | "manual" | "operations" | "aliases" | "vocab";
 
 function SimplePager({
   page,
@@ -204,6 +216,12 @@ export function TagNormalizationPanel({
   const [deletingAlias, setDeletingAlias] = useState<string | null>(null);
   const [unignoringKey, setUnignoringKey] = useState<string | null>(null);
 
+  // 目标词表
+  const [vocab, setVocab] = useState<VocabItem[]>([]);
+  const [vocabBusy, setVocabBusy] = useState(false);
+  const [vocabAddId, setVocabAddId] = useState(0);
+  const [vocabTopN, setVocabTopN] = useState(60);
+
   const loadClusters = useCallback(
     async (page: number, silent = false): Promise<boolean> => {
       if (!silent) setClustersLoading(true);
@@ -250,6 +268,13 @@ export function TagNormalizationPanel({
     return true;
   }, []);
 
+  const loadVocab = useCallback(async (): Promise<boolean> => {
+    const r = await normRequest<VocabListResponse>("/api/tags/vocabulary");
+    if (!r.ok) return false;
+    setVocab(r.data.list || []);
+    return true;
+  }, []);
+
   const refreshAll = useCallback(async () => {
     setInitialLoading(true);
     const results = await Promise.all([
@@ -257,12 +282,13 @@ export function TagNormalizationPanel({
       loadOperations(opsPage, true),
       loadAliases(),
       loadIgnores(),
+      loadVocab(),
     ]);
     setInitialLoading(false);
     if (n && results.some((ok) => !ok)) {
       toastError(n.loadFailed);
     }
-  }, [loadClusters, loadOperations, loadAliases, loadIgnores, clusterPage, opsPage, n, toastError]);
+  }, [loadClusters, loadOperations, loadAliases, loadIgnores, loadVocab, clusterPage, opsPage, n, toastError]);
 
   const handleToggle = () => {
     const next = !open;
@@ -401,6 +427,51 @@ export function TagNormalizationPanel({
     await loadClusters(clusterPage, true);
   };
 
+  // ── 目标词表 ──
+
+  const handleAddVocab = async () => {
+    if (!vocabAddId) return;
+    setVocabBusy(true);
+    const r = await normRequest<{ ok: boolean }>("/api/tags/vocabulary", postJson({ add: [vocabAddId] }));
+    setVocabBusy(false);
+    if (!r.ok) {
+      toastError(r.error);
+      return;
+    }
+    if (n) toastSuccess(n.vocabAddSuccess);
+    setVocabAddId(0);
+    await loadVocab();
+  };
+
+  const handleRemoveVocab = async (tagId: number) => {
+    setVocabBusy(true);
+    const r = await normRequest<{ ok: boolean }>("/api/tags/vocabulary", postJson({ remove: [tagId] }));
+    setVocabBusy(false);
+    if (!r.ok) {
+      toastError(r.error);
+      return;
+    }
+    if (n) toastSuccess(n.vocabRemoveSuccess);
+    setVocab((prev) => prev.filter((v) => v.tagId !== tagId));
+  };
+
+  const handleInitVocab = async () => {
+    const top = [...tags]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, vocabTopN)
+      .map((tg) => tg.id);
+    if (top.length === 0) return;
+    setVocabBusy(true);
+    const r = await normRequest<{ ok: boolean }>("/api/tags/vocabulary", postJson({ add: top }));
+    setVocabBusy(false);
+    if (!r.ok) {
+      toastError(r.error);
+      return;
+    }
+    if (n) toastSuccess(n.vocabInitialized);
+    await loadVocab();
+  };
+
   const clusterTotalPages = Math.max(1, Math.ceil(clustersTotal / CLUSTER_PAGE_SIZE));
   const opsTotalPages = Math.max(1, Math.ceil(opsTotal / OPERATION_PAGE_SIZE));
   const sourceNameTrimmed = sourceName.trim();
@@ -411,6 +482,7 @@ export function TagNormalizationPanel({
     { key: "manual", label: n?.manualTab },
     { key: "operations", label: n?.operationsTab },
     { key: "aliases", label: n?.aliasesTab },
+    { key: "vocab", label: n?.vocabTab },
   ];
 
   return (
@@ -653,7 +725,7 @@ export function TagNormalizationPanel({
                 nextTitle={t.home?.nextPage}
               />
             </div>
-          ) : (
+          ) : tab === "aliases" ? (
             /* ── Aliases & ignores ── */
             <div className="space-y-3">
               <div className="space-y-1">
@@ -716,6 +788,76 @@ export function TagNormalizationPanel({
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          ) : (
+            /* ── 目标词表 ── */
+            <div className="space-y-3">
+              <p className="text-xs text-muted">{n?.vocabDesc}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-[12rem] flex-1">
+                  <SearchableSelect
+                    value={vocabAddId}
+                    onChange={setVocabAddId}
+                    options={tags
+                      .filter((tg) => !vocab.some((v) => v.tagId === tg.id))
+                      .map((tg) => ({ value: tg.id, label: tg.name, hint: String(tg.count) }))}
+                    placeholder={n?.vocabAddPlaceholder}
+                    searchPlaceholder={n?.searchPlaceholder}
+                    noMatchText={t.common?.noSearchResults}
+                  />
+                </div>
+                <button
+                  onClick={handleAddVocab}
+                  disabled={vocabBusy || !vocabAddId}
+                  className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:bg-accent/90 disabled:opacity-50"
+                >
+                  {vocabBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ListPlus className="h-3 w-3" />}
+                  {n?.vocabAddSuccess}
+                </button>
+                <span className="ml-auto flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={10}
+                    max={200}
+                    value={vocabTopN}
+                    onChange={(e) => setVocabTopN(Math.max(10, Math.min(200, parseInt(e.target.value) || 60)))}
+                    className="h-7 w-16 rounded-lg border border-border/50 bg-background px-2 text-xs text-foreground outline-none focus:border-accent/50"
+                  />
+                  <button
+                    onClick={handleInitVocab}
+                    disabled={vocabBusy}
+                    className="flex items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                  >
+                    {n?.vocabInitTopN}
+                  </button>
+                </span>
+              </div>
+              {vocab.length === 0 ? (
+                <div className="py-6 text-center text-xs text-muted">{n?.vocabEmpty}</div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {vocab.map((v) => (
+                    <span
+                      key={v.tagId}
+                      className="flex items-center gap-1 rounded-full bg-accent/10 px-2 py-1 text-xs font-medium text-accent"
+                    >
+                      {v.name}
+                      <span className="text-[10px] text-muted">{v.comicCount}</span>
+                      <button
+                        onClick={() => handleRemoveVocab(v.tagId)}
+                        disabled={vocabBusy}
+                        title={n?.vocabRemoveSuccess}
+                        className="rounded-full px-0.5 text-muted transition-colors hover:text-red-400 disabled:opacity-50"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="text-[10px] text-muted">
+                {vocab.length} {n?.vocabCountUnit}
               </div>
             </div>
           )}

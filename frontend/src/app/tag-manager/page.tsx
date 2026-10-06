@@ -29,6 +29,7 @@ import {
   Wand2,
   Clapperboard,
   Merge,
+  ListChecks,
 } from "lucide-react";
 import { useTranslation, useLocale } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
@@ -265,6 +266,15 @@ interface AINormGroup {
   error?: string;
 }
 
+/** AI 词表映射：单个长尾标签的处置建议（keep 不出现，视作保留） */
+interface AIMappingItem {
+  tagId: number;
+  tag: string;
+  action: "map" | "delete";
+  target?: AINormTag;
+  reason?: string;
+}
+
 /** Resolve a tag color: DB default is "default", treat it as null */
 function resolveTagColor(color: string | undefined): string {
   if (!color || color === "default") return "#6b7280";
@@ -362,7 +372,7 @@ export default function TagManagerPage() {
 
   // AI 智能生成
   const [showAIPanel, setShowAIPanel] = useState(false);
-  const [aiMode, setAiMode] = useState<"tags" | "categories" | "normalize">("tags");
+  const [aiMode, setAiMode] = useState<"tags" | "categories" | "normalize" | "mapping">("tags");
   const [aiRunning, setAiRunning] = useState(false);
   const [aiProgress, setAiProgress] = useState<{ current: number; total: number } | null>(null);
   const [aiResults, setAiResults] = useState<(AITagSuggestion | AICategorySuggestion)[]>([]);
@@ -370,6 +380,11 @@ export default function TagManagerPage() {
   // AI 标签归一：分组建议 + 逐组合并忙碌态（组 targetId 或 "all"）
   const [aiNormGroups, setAiNormGroups] = useState<AINormGroup[]>([]);
   const [aiNormBusyKey, setAiNormBusyKey] = useState<string | null>(null);
+  // AI 词表映射：处置建议 + 勾选（默认勾选 map，delete 需手动勾）+ 应用忙碌态
+  const [aiMappings, setAiMappings] = useState<AIMappingItem[]>([]);
+  const [aiMappingChecked, setAiMappingChecked] = useState<Set<number>>(new Set());
+  const [aiMappingFilter, setAiMappingFilter] = useState<"all" | "map" | "delete">("all");
+  const [aiMappingApplying, setAiMappingApplying] = useState(false);
 
   // 拖拽排序
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -902,6 +917,115 @@ export default function TagManagerPage() {
     await loadData();
   }, [aiNormGroups, aiNormBusyKey, applyNormGroupAt, showToast, loadData]);
 
+  // ── AI 词表映射 ──
+
+  const handleAIMapping = useCallback(async () => {
+    if (aiRunning) return;
+    setAiRunning(true);
+    setAiMappings([]);
+    setAiMappingChecked(new Set());
+    try {
+      const res = await fetch(apiPath("/api/ai/suggest-tag-mapping"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "AI 请求失败", "error");
+        return;
+      }
+      const mappings: AIMappingItem[] = data.mappings || [];
+      setAiMappings(mappings);
+      // 默认勾选全部 map；delete 需手动勾选
+      setAiMappingChecked(new Set(mappings.map((m, i) => (m.action === "map" ? i : -1)).filter((i) => i >= 0)));
+      const mapCount = mappings.filter((m) => m.action === "map").length;
+      const delCount = mappings.filter((m) => m.action === "delete").length;
+      showToast(
+        mappings.length > 0
+          ? `映射分析完成：归并 ${mapCount} 条、删除建议 ${delCount} 条（共分析 ${data.analyzed ?? 0} 个长尾标签）`
+          : "映射分析完成：未发现可归并或应删除的标签",
+        "success"
+      );
+    } catch (e) {
+      showToast(`映射分析失败: ${String(e)}`, "error");
+    } finally {
+      setAiRunning(false);
+    }
+  }, [aiRunning, showToast]);
+
+  const applyAIMappings = useCallback(async () => {
+    if (aiMappingApplying) return;
+    const selected = aiMappings.filter((_, i) => aiMappingChecked.has(i));
+    if (selected.length === 0) return;
+    setAiMappingApplying(true);
+    try {
+      // 应用前快照（整域可恢复兜底）
+      await fetch(apiPath("/api/snapshots"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `映射应用前（${selected.length} 条）` }),
+      }).catch(() => {});
+
+      // map：按目标分组批量归并；delete：逐个删除
+      const groups = new Map<number, { target: AINormTag; sourceIds: number[] }>();
+      const deletes: string[] = [];
+      for (const m of selected) {
+        if (m.action === "map" && m.target) {
+          const g = groups.get(m.target.id) ?? { target: m.target, sourceIds: [] };
+          g.sourceIds.push(m.tagId);
+          groups.set(m.target.id, g);
+        } else if (m.action === "delete") {
+          deletes.push(m.tag);
+        }
+      }
+
+      let merged = 0;
+      let failed = 0;
+      for (const g of groups.values()) {
+        try {
+          const res = await fetch(apiPath("/api/tags/normalization/apply"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetTagId: g.target.id, sourceTagIds: g.sourceIds }),
+          });
+          if (res.ok) merged += g.sourceIds.length;
+          else failed += g.sourceIds.length;
+        } catch {
+          failed += g.sourceIds.length;
+        }
+      }
+      let deleted = 0;
+      for (const name of deletes) {
+        try {
+          const res = await fetch(apiPath("/api/tags"), {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          });
+          if (res.ok) deleted += 1;
+          else failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      const applied = new Set<number>();
+      aiMappings.forEach((m, i) => {
+        if (aiMappingChecked.has(i)) applied.add(i);
+      });
+      setAiMappings((prev) => prev.filter((_, i) => !applied.has(i)));
+      setAiMappingChecked(new Set());
+      showToast(
+        `映射应用完成：归并 ${merged} 个标签、删除 ${deleted} 个${failed > 0 ? `，${failed} 条失败` : ""}`,
+        failed > 0 ? "error" : "success"
+      );
+      await loadData();
+    } finally {
+      setAiMappingApplying(false);
+    }
+  }, [aiMappings, aiMappingChecked, aiMappingApplying, showToast, loadData]);
+
   // ── Category actions ──
 
   const handleSaveCategory = async (slug: string) => {
@@ -1261,6 +1385,8 @@ export default function TagManagerPage() {
             <p className="text-xs text-muted">
               {aiMode === "normalize"
                 ? "AI 以高用量标签为规范池，把低用量的变体（译名、罗马音、繁简体、空格差异等）归入其中；既有标签都不合适时会建议新建更规范的标签（卡片标注「新建」，合并时自动创建）。归并会写入别名并记入操作日志，可在标签归一工作台撤销。"
+                : aiMode === "mapping"
+                ? "词表驱动式重构：先在「标签归一工作台 → 词表」页签定好几十个规范目标，AI 再把词表外的长尾标签逐个判定——归入某个词表标签、或标记为垃圾待删（没提到的默认保留）。归并类默认勾选，删除类需你手动勾选；应用前自动创建快照。"
                 : "基于书库中的漫画/小说内容，使用 AI 自动分析并推荐合适的标签或分类。"}
             </p>
 
@@ -1298,6 +1424,17 @@ export default function TagManagerPage() {
               >
                 <Merge className="h-3 w-3" />
                 标签归一
+              </button>
+              <button
+                onClick={() => setAiMode("mapping")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  aiMode === "mapping"
+                    ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
+                    : "bg-card text-muted hover:text-foreground"
+                }`}
+              >
+                <ListChecks className="h-3 w-3" />
+                词表映射
               </button>
             </div>
 
@@ -1383,6 +1520,90 @@ export default function TagManagerPage() {
                   })}
                 </div>
               )
+            ) : aiMode === "mapping" ? (
+              aiMappings.length > 0 &&
+              (() => {
+                const mapCount = aiMappings.filter((m) => m.action === "map").length;
+                const delCount = aiMappings.filter((m) => m.action === "delete").length;
+                const visible = aiMappings
+                  .map((m, i) => ({ m, i }))
+                  .filter(({ m }) => aiMappingFilter === "all" || m.action === aiMappingFilter);
+                return (
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(
+                        [
+                          ["all", `全部 ${aiMappings.length}`],
+                          ["map", `归并 ${mapCount}`],
+                          ["delete", `删除建议 ${delCount}`],
+                        ] as const
+                      ).map(([f, label]) => (
+                        <button
+                          key={f}
+                          onClick={() => setAiMappingFilter(f)}
+                          className={`rounded-lg px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                            aiMappingFilter === f
+                              ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
+                              : "bg-card text-muted hover:text-foreground"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() =>
+                          setAiMappingChecked((prev) => {
+                            const next = new Set(prev);
+                            const allChecked = visible.every(({ i }) => next.has(i));
+                            for (const { i } of visible) {
+                              if (allChecked) next.delete(i);
+                              else next.add(i);
+                            }
+                            return next;
+                          })
+                        }
+                        className="ml-auto text-[10px] text-muted hover:text-foreground"
+                      >
+                        当前筛选全选/反选
+                      </button>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto space-y-1 rounded-xl border border-border/30 p-2" style={{ scrollbarWidth: "thin" }}>
+                      {visible.map(({ m, i }) => (
+                        <label
+                          key={`${m.tagId}-${i}`}
+                          className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-background px-2 py-1.5 text-xs"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={aiMappingChecked.has(i)}
+                            onChange={(e) =>
+                              setAiMappingChecked((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(i);
+                                else next.delete(i);
+                                return next;
+                              })
+                            }
+                            className="h-3.5 w-3.5 shrink-0 rounded border-border accent-purple-500"
+                          />
+                          <span className="min-w-0 truncate font-medium text-foreground">{m.tag}</span>
+                          {m.action === "map" ? (
+                            <>
+                              <span className="shrink-0 text-muted">→</span>
+                              <span className="min-w-0 truncate font-medium text-purple-400">{m.target?.name}</span>
+                            </>
+                          ) : (
+                            <span className="shrink-0 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+                              删除
+                            </span>
+                          )}
+                          {m.reason && <span className="ml-auto shrink-0 text-[10px] text-muted">{m.reason}</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()
             ) : (
               aiResults.length > 0 && (
               <div className="max-h-48 overflow-y-auto space-y-1 rounded-xl border border-border/30 p-2" style={{ scrollbarWidth: "thin" }}>
@@ -1423,7 +1644,13 @@ export default function TagManagerPage() {
             {/* 操作按钮 */}
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={aiMode === "normalize" ? handleAINormalize : handleAIGenerate}
+                onClick={
+                  aiMode === "normalize"
+                    ? handleAINormalize
+                    : aiMode === "mapping"
+                    ? handleAIMapping
+                    : handleAIGenerate
+                }
                 disabled={aiRunning}
                 className="flex items-center gap-1.5 rounded-lg bg-purple-500 px-4 py-2 text-xs font-medium text-white hover:bg-purple-600 transition-colors disabled:opacity-50"
               >
@@ -1433,8 +1660,12 @@ export default function TagManagerPage() {
                   <Wand2 className="h-3.5 w-3.5" />
                 )}
                 {aiRunning
-                  ? aiMode === "normalize" ? "分析中..." : "生成中..."
-                  : aiMode === "normalize" ? "开始 AI 归一分析" : `开始 AI ${aiMode === "tags" ? "标签" : "分类"}生成`}
+                  ? aiMode === "normalize" || aiMode === "mapping" ? "分析中..." : "生成中..."
+                  : aiMode === "normalize"
+                  ? "开始 AI 归一分析"
+                  : aiMode === "mapping"
+                  ? "开始词表映射分析"
+                  : `开始 AI ${aiMode === "tags" ? "标签" : "分类"}生成`}
               </button>
               {aiMode === "normalize" && aiNormGroups.some((g) => !g.applied && !g.error) && !aiRunning && (
                 <button
@@ -1450,11 +1681,28 @@ export default function TagManagerPage() {
                   全部合并
                 </button>
               )}
-              {(aiMode === "normalize" ? aiNormGroups.length > 0 : aiResults.length > 0) && !aiRunning && (
+              {aiMode === "mapping" && aiMappings.length > 0 && !aiRunning && (
+                <button
+                  onClick={applyAIMappings}
+                  disabled={aiMappingApplying || aiMappingChecked.size === 0}
+                  className="flex items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-2 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/20 disabled:opacity-50"
+                  title="应用前自动创建快照；归并可撤销"
+                >
+                  {aiMappingApplying ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ListChecks className="h-3.5 w-3.5" />
+                  )}
+                  应用选中（{aiMappingChecked.size}）
+                </button>
+              )}
+              {(aiMode === "normalize" ? aiNormGroups.length > 0 : aiMode === "mapping" ? aiMappings.length > 0 : aiResults.length > 0) && !aiRunning && (
                 <button
                   onClick={() => {
                     setAiResults([]);
                     setAiNormGroups([]);
+                    setAiMappings([]);
+                    setAiMappingChecked(new Set());
                   }}
                   className="text-xs text-muted hover:text-foreground"
                 >
@@ -1464,6 +1712,8 @@ export default function TagManagerPage() {
               <span className="text-[10px] text-muted ml-auto">
                 {aiMode === "normalize"
                   ? "AI 将分析使用最多的前 2000 个内容标签（已忽略簇除外），先在规范池内互配，再把低用量变体归入池中"
+                  : aiMode === "mapping"
+                  ? "分析词表外的全部长尾标签（最多 3000 个），归并默认勾选、删除需手动勾选"
                   : aiMode === "tags" ? "将为缺少标签的作品生成建议（最多30本）" : "将为未分类作品生成建议（最多30本）"}
               </span>
             </div>

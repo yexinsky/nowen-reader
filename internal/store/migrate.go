@@ -585,6 +585,20 @@ var Migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS "Snapshot_domain_createdAt_idx" ON "Snapshot"("domain", "createdAt" DESC);`,
 		}, "\n"),
 	},
+	{
+		Version:     48,
+		Description: "Add TagVocab table for curated target vocabulary (vocabulary-driven tag rebuild)",
+		SQL: strings.Join([]string{
+			// 目标词表：词表驱动式标签重构的规范目标集合（tagId 引用既有标签，
+			// 词表匹配走 TagNormKey 繁简折叠，展示名保持词表选定写法）
+			`CREATE TABLE IF NOT EXISTS "TagVocab" (
+				"tagId"     INTEGER NOT NULL PRIMARY KEY,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT "TagVocab_tagId_fkey" FOREIGN KEY ("tagId")
+					REFERENCES "Tag" ("id") ON DELETE CASCADE
+			);`,
+		}, "\n"),
+	},
 }
 
 // ensureMigrationsTable creates the migrations tracking table.

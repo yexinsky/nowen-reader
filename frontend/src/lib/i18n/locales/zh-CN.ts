@@ -1369,6 +1369,15 @@ autoDetect: "智能合集",
       manualTab: "手动归并",
       operationsTab: "最近操作",
       aliasesTab: "别名与忽略",
+      vocabTab: "词表",
+      vocabDesc: "词表是重构标签体系的目标集合（几十个常用标签）。建好后用 AI 智能生成的「词表映射」模式批量处置长尾标签；词表匹配自动做繁简折叠。",
+      vocabEmpty: "词表为空。可一键按用量初始化，或从下方选择标签加入。",
+      vocabAddPlaceholder: "选择标签加入词表...",
+      vocabInitTopN: "按用量初始化 Top",
+      vocabInitialized: "已按用量初始化词表",
+      vocabAddSuccess: "已加入词表",
+      vocabRemoveSuccess: "已移出词表",
+      vocabCountUnit: "个词表标签",
       // 候选簇
       totalComicsLabel: "涉及书目",
       mergeTargetLabel: "归并目标",
@@ -2728,6 +2737,15 @@ export interface Translations {
       manualTab: string;
       operationsTab: string;
       aliasesTab: string;
+      vocabTab: string;
+      vocabDesc: string;
+      vocabEmpty: string;
+      vocabAddPlaceholder: string;
+      vocabInitTopN: string;
+      vocabInitialized: string;
+      vocabAddSuccess: string;
+      vocabRemoveSuccess: string;
+      vocabCountUnit: string;
       totalComicsLabel: string;
       mergeTargetLabel: string;
       merge: string;
