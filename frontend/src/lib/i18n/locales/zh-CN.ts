@@ -707,6 +707,8 @@ const zhCN = {
     maxTokensHint: "AI 单次回复的最大 token 数（默认 2000）",
     maxRetries: "失败重试次数",
     maxRetriesHint: "API 调用失败时自动重试的次数（0-5）",
+    tagNormBatchSize: "标签归一批量",
+    tagNormBatchSizeHint: "标签归一分析每批送入 AI 的标签数（50-800，默认 250）。越大调用越少、跨批漏配越少，但单次更慢、更容易撞输出上限",
     advancedSettings: "高级设置",
     usage: "使用量统计",
     totalCalls: "总调用次数",
@@ -2102,6 +2104,8 @@ export interface Translations {
     maxTokensHint: string;
     maxRetries: string;
     maxRetriesHint: string;
+    tagNormBatchSize: string;
+    tagNormBatchSizeHint: string;
     advancedSettings: string;
     usage: string;
     totalCalls: string;

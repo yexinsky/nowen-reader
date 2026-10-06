@@ -285,6 +285,73 @@ func TestAISuggestTagMergesBatching(t *testing.T) {
 	}
 }
 
+// TestAISuggestTagMergesBatchSizeConfig 验证 AI 设置里的 tagNormBatchSize 生效：
+// 批大小 600 时 510 个标签应单批完成（1 次 LLM 调用）。
+func TestAISuggestTagMergesBatchSizeConfig(t *testing.T) {
+	r := setupTestRouter(t)
+	cookie := registerAndLogin(t, r)
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	if err := store.BulkCreateComics([]struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"ts-bcfg-1", "tsbcfg1.cbz", "TS BCfg 1", 1000},
+	}); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+	names := make([]string, 510)
+	for i := range names {
+		names[i] = fmt.Sprintf("b%03d", i)
+	}
+	if err := store.AddTagsToComic("ts-bcfg-1", names); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !strings.HasSuffix(req.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		aiReply := `[{"target":"b000","sources":["b001"]}]`
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + strings.ReplaceAll(aiReply, `"`, `\"`) + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	cfg := testAIConfigWithURL(server.URL + "/v1")
+	cfg.TagNormBatchSize = 600
+	if err := service.SaveAIConfig(cfg); err != nil {
+		t.Fatalf("SaveAIConfig failed: %v", err)
+	}
+
+	w := performAuthedRequest(r, "POST", "/api/ai/suggest-tag-merges", map[string]bool{}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("suggest-tag-merges = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("LLM calls = %d, want 1 (510 tags / batch 600)", got)
+	}
+	var resp struct {
+		Analyzed int `json:"analyzed"`
+		Groups   []struct {
+			Target struct {
+				Name string `json:"name"`
+			} `json:"target"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response failed: %v", err)
+	}
+	if resp.Analyzed != 510 || len(resp.Groups) != 1 || resp.Groups[0].Target.Name != "b000" {
+		t.Fatalf("analyzed=%d groups=%#v, want 510 + 1 group (b000)", resp.Analyzed, resp.Groups)
+	}
+}
+
 // TestAISuggestTagMergesTruncationError 输出被 max_tokens 截断时应报明确的「截断」错误，
 // 而不是让半截 JSON 流入解析层。
 func TestAISuggestTagMergesTruncationError(t *testing.T) {

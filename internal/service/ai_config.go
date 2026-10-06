@@ -51,6 +51,10 @@ type AIConfig struct {
 	MaxTokens     int    `json:"maxTokens"`  // 0-1: 最大输出 token 数，0 表示使用默认值
 	MaxRetries    int    `json:"maxRetries"` // 0-2: 最大重试次数，0 表示不重试
 
+	// 标签归一分析：每批送入 LLM 的标签数（50-800，缺省 250）。
+	// 批越大调用越少、跨批漏配越少，但单次请求更慢、输出更容易撞上限。
+	TagNormBatchSize int `json:"tagNormBatchSize"`
+
 	// 本地模型配置
 	EnableLocalAI   bool   `json:"enableLocalAI"`
 	LocalEngine     string `json:"localEngine"`     // llama.cpp / vllm / custom
@@ -71,6 +75,8 @@ var defaultAIConfig = AIConfig{
 	CloudModel:    "gpt-4o-mini",
 	MaxTokens:     2000,
 	MaxRetries:    2,
+
+	TagNormBatchSize: 250,
 
 	// 本地模型默认值
 	EnableLocalAI:   false,
@@ -101,6 +107,16 @@ func LoadAIConfig() AIConfig {
 	}
 	if cfg.MaxRetries < 0 {
 		cfg.MaxRetries = 0
+	}
+	// 标签归一批大小：缺省 250，夹取到 [50, 800]（候选总量上限即 800）
+	if cfg.TagNormBatchSize <= 0 {
+		cfg.TagNormBatchSize = defaultAIConfig.TagNormBatchSize
+	}
+	if cfg.TagNormBatchSize < 50 {
+		cfg.TagNormBatchSize = 50
+	}
+	if cfg.TagNormBatchSize > 800 {
+		cfg.TagNormBatchSize = 800
 	}
 	return cfg
 }

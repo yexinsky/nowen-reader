@@ -710,6 +710,8 @@ const en: Translations = {
     maxTokensHint: "Maximum tokens per AI response (default 2000)",
     maxRetries: "Retry Count",
     maxRetriesHint: "Auto-retry count on API failure (0-5)",
+    tagNormBatchSize: "Tag Norm Batch Size",
+    tagNormBatchSizeHint: "Tags sent to the AI per batch during tag normalization (50-800, default 250). Larger = fewer calls & fewer cross-batch misses, but slower and closer to output limits",
     advancedSettings: "Advanced Settings",
     usage: "Usage Stats",
     totalCalls: "Total Calls",

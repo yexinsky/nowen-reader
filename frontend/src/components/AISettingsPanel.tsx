@@ -81,6 +81,7 @@ interface AIConfig {
   cloudModel: string;
   maxTokens: number;
   maxRetries: number;
+  tagNormBatchSize: number;
   // 本地模型配置
   enableLocalAI: boolean;
   localEngine: string;
@@ -172,6 +173,7 @@ export function AISettingsPanel() {
         ...cfg,
         maxTokens: cfg.maxTokens || 2000,
         maxRetries: cfg.maxRetries ?? 2,
+        tagNormBatchSize: cfg.tagNormBatchSize || 250,
         // 本地模型默认值
         enableLocalAI: cfg.enableLocalAI ?? false,
         localEngine: cfg.localEngine || "llama.cpp",
@@ -694,6 +696,25 @@ export function AISettingsPanel() {
                   </div>
                   <p className="text-[10px] text-muted/70 pl-0 sm:pl-[7.5rem]">
                     {aiT.maxRetriesHint || "Auto-retry count on API failure (0-5)"}
+                  </p>
+
+                  {/* 标签归一分析批量 */}
+                  <div className="space-y-1.5 sm:space-y-0 sm:flex sm:items-center sm:gap-2">
+                    <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
+                      {aiT.tagNormBatchSize || "Tag Norm Batch Size"}
+                    </span>
+                    <input
+                      type="number"
+                      min={50}
+                      max={800}
+                      step={50}
+                      value={config.tagNormBatchSize}
+                      onChange={(e) => setConfig({ ...config, tagNormBatchSize: Math.max(50, Math.min(800, parseInt(e.target.value) || 250)) })}
+                      className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted/70 pl-0 sm:pl-[7.5rem]">
+                    {aiT.tagNormBatchSizeHint || "Tags sent to the AI per batch during tag normalization (50-800, default 250). Larger = fewer calls & fewer cross-batch misses, but slower and closer to output limits."}
                   </p>
                 </div>
               )}
