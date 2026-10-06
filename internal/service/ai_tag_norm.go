@@ -58,8 +58,13 @@ func tagNormBatchMaxTokens(batchSize int) int {
 	return tokens
 }
 
-// SuggestTagMerges 两段式归一建议：variants 按批送入，每批都携带完整规范池。
+// SuggestTagMerges 两段式归一建议：
+//  1. 规范池自归并——池内两个高用量标签互为同义的对（两段式切分后
+//     变体批不再覆盖它们，需单独一轮批内互配，否则成为盲区）；
+//  2. 变体分批——每批携带完整规范池，把低用量变体归入池中同义标签。
+//
 // pool 应为按用量降序的头部标签；variants 为其余候选。
+// 池的建议排在前，校验时优先占用标签，变体组不得与池组重叠。
 // 调用方负责严格匹配：返回的既有标签名必须与清单完全相等才采用，
 // 新建目标需经 ResolveOrCreateCanonicalTag 落库。
 func SuggestTagMerges(cfg AIConfig, pool, variants []TagNormCandidate) ([]TagMergeSuggestion, error) {
@@ -74,25 +79,55 @@ func SuggestTagMerges(cfg AIConfig, pool, variants []TagNormCandidate) ([]TagMer
 	if batchSize <= 0 {
 		batchSize = defaultTagNormBatchSize
 	}
-	batchMaxTokens := tagNormBatchMaxTokens(batchSize)
 
-	if len(variants) == 0 {
-		return []TagMergeSuggestion{}, nil
-	}
-	total := (len(variants) + batchSize - 1) / batchSize
 	var all []TagMergeSuggestion
-	for i, start := 0, 0; start < len(variants); i, start = i+1, start+batchSize {
-		end := start + batchSize
-		if end > len(variants) {
-			end = len(variants)
-		}
-		batchSuggestions, err := suggestTagMergesBatch(cfg, pool, variants[start:end], batchMaxTokens)
+
+	// 第一轮：规范池内互配（高用量同义对）
+	if len(pool) >= 2 {
+		poolSuggestions, err := suggestTagMergesPoolBatch(cfg, pool, tagNormBatchMaxTokens(len(pool)))
 		if err != nil {
-			return nil, fmt.Errorf("第 %d/%d 批分析失败: %w", i+1, total, err)
+			return nil, fmt.Errorf("规范池分析失败: %w", err)
 		}
-		all = append(all, batchSuggestions...)
+		all = append(all, poolSuggestions...)
+	}
+
+	// 第二轮：变体分批（每批携带完整规范池）
+	if len(variants) > 0 {
+		total := (len(variants) + batchSize - 1) / batchSize
+		for i, start := 0, 0; start < len(variants); i, start = i+1, start+batchSize {
+			end := start + batchSize
+			if end > len(variants) {
+				end = len(variants)
+			}
+			batchSuggestions, err := suggestTagMergesBatch(cfg, pool, variants[start:end], tagNormBatchMaxTokens(batchSize))
+			if err != nil {
+				return nil, fmt.Errorf("第 %d/%d 批分析失败: %w", i+1, total, err)
+			}
+			all = append(all, batchSuggestions...)
+		}
 	}
 	return all, nil
+}
+
+// suggestTagMergesPoolBatch 规范池自归并：在高用量标签内部找同义组。
+func suggestTagMergesPoolBatch(cfg AIConfig, pool []TagNormCandidate, maxTokens int) ([]TagMergeSuggestion, error) {
+	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. You get the library's HIGH-USAGE tags. Find groups of tags that denote EXACTLY THE SAME concept: different spellings, translations (e.g. English / Japanese / Chinese), romanizations, abbreviations, Traditional/Simplified Chinese variants, extra/missing spaces, hyphens or punctuation.
+
+Rules:
+- Merge ONLY exact synonyms. Tags with related but DIFFERENT meanings (e.g. "少女" vs "萝莉", "swimsuit" vs "bikini") must NOT be merged
+- Target priority: the intuitive mainstream name ALWAYS wins — a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"; usage count only breaks ties between equally intuitive names; NEVER pick a target just because it has more comics
+- Copy tag names VERBATIM from the provided list — never invent, translate or modify names
+- Each tag may appear in at most one group; a tag must never be both target and source
+- Return ONLY a JSON array, no extra text: [{"target":"<canonical>","sources":["<variant>",...]}]
+- If nothing is a duplicate, return []`
+
+	var poolLines strings.Builder
+	for _, c := range pool {
+		fmt.Fprintf(&poolLines, "%s #%d\n", c.Name, c.Count)
+	}
+	userPrompt := fmt.Sprintf("High-usage tags (name #comicCount):\n%s\nGroup exact-synonym tags and return the JSON array.", poolLines.String())
+
+	return parseTagMergeResponse(cfg, systemPrompt, userPrompt, maxTokens)
 }
 
 // suggestTagMergesBatch 单次 LLM 调用处理一批变体（附带完整规范池）。
@@ -124,6 +159,11 @@ Example: pool ["巨乳 #340","少女 #120"], variants ["besar #12","SHOUJO #3","
 	userPrompt := fmt.Sprintf("Canonical pool (high-usage):\n%s\nVariant batch (low-usage):\n%s\nGroup each variant into the pool (or within the batch) and return the JSON array.",
 		poolLines.String(), variantLines.String())
 
+	return parseTagMergeResponse(cfg, systemPrompt, userPrompt, maxTokens)
+}
+
+// parseTagMergeResponse 发起 LLM 调用并从响应中解析归并建议（严格截断检测）。
+func parseTagMergeResponse(cfg AIConfig, systemPrompt, userPrompt string, maxTokens int) ([]TagMergeSuggestion, error) {
 	content, err := CallCloudLLM(cfg, systemPrompt, userPrompt, &LLMCallOptions{
 		Scenario:         "norm_tags",
 		MaxTokens:        maxTokens,

@@ -20,7 +20,9 @@ import (
 // ============================================================
 
 // aiNormMaxCandidates 单次交给 AI 分析的最大标签数（按用量降序截取）。
-const aiNormMaxCandidates = 800
+// DeepSeek V4 等大上下文模型下，2000 可覆盖数千标签的库；
+// 超出部分等后续轮次收敛（每轮合并后重新排序切分）。
+const aiNormMaxCandidates = 2000
 
 // aiNormTargetPoolSize 规范池大小：用量降序头部的这些标签作为优先合并目标；
 // 候选不足时取一半，保证留有变体。由 service 提示词完整带入每个变体批。

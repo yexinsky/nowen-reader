@@ -294,8 +294,8 @@ func TestAISuggestTagMergesBatching(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("suggest-tag-merges = %d %s, want 200", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("LLM calls = %d, want 2 (510 tags: pool 150 + variants 360 / batch 250)", got)
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("LLM calls = %d, want 3 (pool 150 self-merge + variants 360 / batch 250 = 2)", got)
 	}
 	var resp struct {
 		Analyzed int `json:"analyzed"`
@@ -367,8 +367,8 @@ func TestAISuggestTagMergesBatchSizeConfig(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("suggest-tag-merges = %d %s, want 200", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("LLM calls = %d, want 1 (510 tags / batch 600)", got)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("LLM calls = %d, want 2 (pool 150 self-merge + variants 360 / batch 600 = 1)", got)
 	}
 	var resp struct {
 		Analyzed int `json:"analyzed"`

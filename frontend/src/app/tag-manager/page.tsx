@@ -1463,7 +1463,7 @@ export default function TagManagerPage() {
               )}
               <span className="text-[10px] text-muted ml-auto">
                 {aiMode === "normalize"
-                  ? "AI 将分析使用最多的前 800 个内容标签（已忽略簇除外）"
+                  ? "AI 将分析使用最多的前 2000 个内容标签（已忽略簇除外），先在规范池内互配，再把低用量变体归入池中"
                   : aiMode === "tags" ? "将为缺少标签的作品生成建议（最多30本）" : "将为未分类作品生成建议（最多30本）"}
               </span>
             </div>
