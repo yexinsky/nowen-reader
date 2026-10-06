@@ -323,14 +323,23 @@ function BackfillBody({
       updateRow(id, { applying: true, errorMsg: "" });
       try {
         const resp = await jmBackfillApply({ comicId: id, aid });
+        const filtered = resp.filteredTags?.length ?? 0;
         if (resp.applied > 0) {
           updateRow(id, { applying: false, status: "applied", appliedTags: resp.tags });
           if (batch) {
             batchTouchedRef.current = true;
           } else {
-            toast.success(`已写入 ${resp.applied} 个标签`);
+            toast.success(
+              filtered > 0
+                ? `已写入 ${resp.applied} 个标签(过滤名单丢弃 ${filtered} 个)`
+                : `已写入 ${resp.applied} 个标签`
+            );
             onChanged?.();
           }
+        } else if (filtered > 0) {
+          // 上游有标签但全被过滤名单挡下:与"上游无标签"区分,避免用户以为匹配失败
+          updateRow(id, { applying: false, status: "noTags" });
+          if (!batch) toast.warning(`上游标签全部命中过滤名单(${resp.filteredTags!.join("、")}),未写入`);
         } else {
           updateRow(id, { applying: false, status: "noTags" });
           if (!batch) toast.warning("该作品上游详情没有标签,未写入;可换备选或改词重搜");

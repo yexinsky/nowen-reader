@@ -1,6 +1,15 @@
 # Changelog
 
 ## Unreleased
+### Added (feat/tag-filter 标签过滤名单：下载打标与标签补全写入过滤)
+
+- 用户自定义标签过滤名单(迁移 v49 `TagFilter` 表):命中的标签在**下载入库自动打标**与**标签补全**写入时直接丢弃,不建标签、不挂链,从源头挡住上游脏标签污染标签库
+- 匹配走 `TagNormKey`(trim + 小写 + 繁简折叠),繁简/大小写变体一并命中;只存名字不引用 `Tag`——标签尚未入库也能预先拉黑,标签被删除后名单仍保留
+- 端点(读=登录 / 写=admin):`GET /api/tags/filters`(附与标签库的关联:tagId、书目数,0 = 未入库)、`POST /api/tags/filters`(`{names:[...]}` 批量幂等,同 normKey 跳过并回 added/skipped)、`DELETE /api/tags/filters/:id`
+- 下载侧过滤提前到详情解析点(`DownloadManager.SetTagFilter` 钩子注入):任务列表展示的标签 = 实际会写入书库的标签;归档打标前再兜一次(下载耗时长,名单可能中途变更)——两处均"读名单失败则放行",过滤是增强不阻断打标
+- 补全侧 apply 过滤后写库,响应新增 `filteredTags`;match 预览同步过滤(预览与实际写入一致),弹窗提示「已写入 N 个(过滤名单丢弃 M 个)」,全部被挡时与"上游无标签"区分提示
+- 前端:标签归一工作台新增「过滤」页签(已有标签选择器 + 自由文本输入,chip 显示入库状态,可移除);JM 设置页自动标签开关下加指引链接
+- 测试:store CRUD/幂等/normKey 折叠/超长拒绝、handler 端点守卫与计数、下载快照钩子、共用写入闸门 `jmFilterTagsByBlocklist`
 ### Fixed (fix/ai-tag-scenario AI 情景分配请求失败——分批+严格截断检测+作者标签过滤)
 
 - 根因一(500 截断):`/api/ai/assign-tag-scenarios` 把全部候选标签一次性送给 AI 且 `max_tokens` 硬编码 2000——输出按标签数线性增长(实测约 23 token/条),上千标签必然被截成半截 JSON,解析失败即 500。改为分批调用(每批 250,情景清单每批完整携带),单批输出预算按 28 token/条推算(250→7000),并开启 `finish_reason=length` 严格检测:截断时报明确原因而非难懂的解析错误

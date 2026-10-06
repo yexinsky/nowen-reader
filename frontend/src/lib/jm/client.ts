@@ -424,15 +424,19 @@ export function jmBackfillMatch(body: {
   );
 }
 
-/** 按 aid 拉详情写标签/作者(标签由后端从详情提取;author/metadataSource 仅空缺回填) */
+/** 按 aid 拉详情写标签/作者(标签由后端从详情提取;author/metadataSource 仅空缺回填;
+ *  filteredTags = 命中用户过滤名单被丢弃、未写入的标签) */
 export function jmBackfillApply(body: {
   comicId: string;
   aid: string;
-}): Promise<{ applied: number; tags: string[]; author: string }> {
-  return jmRequest<{ applied: number; tags: string[]; author: string }>("/api/backfill/apply", {
-    method: "POST",
-    body,
-  });
+}): Promise<{ applied: number; tags: string[]; author: string; filteredTags?: string[] }> {
+  return jmRequest<{ applied: number; tags: string[]; author: string; filteredTags?: string[] }>(
+    "/api/backfill/apply",
+    {
+      method: "POST",
+      body,
+    }
+  );
 }
 
 /** 按 aid 拉详情改写书库标题(补全名称;未传 newTitle 时由服务端按卷标规则合成,口径权威) */

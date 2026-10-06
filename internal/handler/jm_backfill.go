@@ -12,7 +12,7 @@ package handler
 // candidates 支持 libraryIds 逗号分隔参数与可管理书库求交集(书库页弹窗按当前所选书库过滤)。
 // 上游纪律:match/apply 共用限速器(≥1.2s/次),循环调用打不穿上游。
 // 写入口径与下载入库自动打标(jm_download.go)完全一致:
-// 标签 normalizeJmTags(上限 30)、作者过占位符、author/metadataSource 仅空缺回填。
+// 标签 normalizeJmTags(上限 30)、过用户过滤名单、作者过占位符、author/metadataSource 仅空缺回填。
 
 import (
 	"errors"
@@ -458,10 +458,12 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 			if len(rawList) == 1 {
 				if meta, ok := jm.ExtractComicItemMeta(rawList[0]); ok && meta.Aid == body.Aid {
 					score := jmScoreMatch(body.Title, body.Author, meta.Title, meta.Author)
-				item := jmMatchItem{
-					Aid: meta.Aid, Title: meta.Title, Author: meta.Author,
-					Tags: meta.Tags, Score: score, ViaAid: true, CoverURL: meta.CoverURL,
-				}
+					// 预览标签与 apply 写入口径一致(过滤名单命中项不展示——不会写入)
+					matchTags, _ := jmFilterTagsByBlocklist(meta.Tags)
+					item := jmMatchItem{
+						Aid: meta.Aid, Title: meta.Title, Author: meta.Author,
+						Tags: matchTags, Score: score, ViaAid: true, CoverURL: meta.CoverURL,
+					}
 					if score >= jmAidMatchMinScore {
 						// aid 即权威匹配;相似度过关则视为确定命中
 						item.Score = 1
@@ -498,11 +500,13 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 			if !ok {
 				continue
 			}
+			// 预览标签与 apply 写入口径一致(过滤名单命中项不展示——不会写入)
+			matchTags, _ := jmFilterTagsByBlocklist(meta.Tags)
 			matches = append(matches, jmMatchItem{
 				Aid:      meta.Aid,
 				Title:    meta.Title,
 				Author:   meta.Author,
-				Tags:     meta.Tags,
+				Tags:     matchTags,
 				Score:    jmScoreMatch(body.Title, body.Author, meta.Title, meta.Author),
 				CoverURL: meta.CoverURL,
 			})
@@ -519,7 +523,8 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 
 	// POST /backfill/apply — 后端自行拉详情取标签(不信任客户端透传),
 	// 写入口径与下载入库自动打标一致;内容标签不存在自动创建(AddTagsToComic upsert),
-	// 有效作者名追加 author-kind 独立标签(AddAuthorTagToComic)
+	// 有效作者名追加 author-kind 独立标签(AddAuthorTagToComic)。
+	// 过滤名单命中项丢弃,丢弃结果随响应返回(前端提示"已过滤 N 个")。
 	g.POST("/backfill/apply", func(c *gin.Context) {
 		var body struct {
 			ComicID string `json:"comicId"`
@@ -546,6 +551,9 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 		}
 		tags, authorRaw := jm.ExtractDetailMeta(detail)
 		author := jmSyncAuthorName(authorRaw)
+		// 过滤名单:命中项不写库(tags 随响应返回的即实际写入集,前端展示不虚报)
+		tags, filtered := jmFilterTagsByBlocklist(tags)
+		jmLogDroppedTags("标签补全", filtered)
 
 		applied := 0
 		if len(tags) > 0 {
@@ -578,7 +586,7 @@ func registerJMBackfillRoutes(g *gin.RouterGroup) {
 				log.Printf("[jm] 补标签元数据回填失败(comic=%s): %v", body.ComicID, err)
 			}
 		}
-		jmOK(c, gin.H{"applied": applied, "tags": tags, "author": author})
+		jmOK(c, gin.H{"applied": applied, "tags": tags, "author": author, "filteredTags": filtered})
 	})
 
 	// POST /backfill/rename — 漫画名补全:按 aid 拉详情取 canonical 标题改名

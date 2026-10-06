@@ -135,10 +135,17 @@ var (
 	jmDownloadMu sync.Mutex
 )
 
-// jmDownloads 取下载管理器并完成一次性接线(归档回调 → 书库扫描 → 自动标签)。
+// jmDownloads 取下载管理器并完成一次性接线(归档回调 → 书库扫描 → 自动标签;
+// 标签过滤钩子 → 任务快照与写入口径同源)。
 func jmDownloads() *jm.DownloadManager {
 	dl := jmService().Downloads()
 	jmDownloadWireOnce.Do(func() {
+		// 快照即「入库后会挂上的标签」:过滤提前到详情解析点,下载列表展示与实际写入一致
+		dl.SetTagFilter(func(tags []string) []string {
+			kept, dropped := jmFilterTagsByBlocklist(tags)
+			jmLogDroppedTags("下载快照", dropped)
+			return kept
+		})
 		dl.SetOnZip(func(t *jm.DownloadTask) {
 			if t.LibraryID == "" {
 				return // 测试目录/非书库目录:不入库、不打标
@@ -194,11 +201,35 @@ func jmSyncAuthorName(author string) string {
 	return a
 }
 
+// jmFilterTagsByBlocklist 按用户过滤名单(标签归一工作台维护)裁剪上游标签名,
+// 返回保留/丢弃两组。下载入库自动打标与标签补全共用此口径:命中名单的标签
+// 不建标签、不挂链,从源头挡住上游脏标签污染标签库。
+// 名单读取失败时放行全部——过滤是增强,不得阻断打标。
+func jmFilterTagsByBlocklist(tags []string) (kept, dropped []string) {
+	if len(tags) == 0 {
+		return tags, nil
+	}
+	kept, dropped, err := store.FilterBlockedTags(tags)
+	if err != nil {
+		log.Printf("[jm] 标签过滤名单读取失败,本次不过滤: %v", err)
+		return tags, nil
+	}
+	return kept, dropped
+}
+
+// jmLogDroppedTags 记录被过滤名单丢弃的标签(打标是附加增强,只记日志不注错)。
+func jmLogDroppedTags(stage string, dropped []string) {
+	if len(dropped) == 0 {
+		return
+	}
+	log.Printf("[jm] %s:已按过滤名单丢弃 %d 个标签: %s", stage, len(dropped), strings.Join(dropped, "、"))
+}
+
 // jmApplyTagsWhenComicExists 下载入库自动标签与作者同步(MOBILE_API.md §6):轮询等待
 // 归档 zip 对应的 Comic 记录产生(PathToID 可确定性算出),然后:
-// ① 挂 JM 内容标签(任务快照 tags,不存在自动创建);② 作者同步:有效作者名(非占位符)
-// 以独立 author-kind 标签挂链(与内容标签结构性区分,同名内容标签撞车时日志跳过),
-// 并把 Comic.author 元数据回填(仅当为空,不覆盖刮削/手动结果)。
+// ① 挂 JM 内容标签(任务快照 tags,过滤名单命中项丢弃,不存在自动创建);
+// ② 作者同步:有效作者名(非占位符)以独立 author-kind 标签挂链(与内容标签结构性区分,
+// 同名内容标签撞车时日志跳过),并把 Comic.author 元数据回填(仅当为空,不覆盖刮削/手动结果)。
 // 只记日志、绝不向任务注错——下载本体已成功,打标是附加增强。
 func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
 	if t.LibraryID == "" || t.ZipName == "" {
@@ -216,6 +247,11 @@ func jmApplyTagsWhenComicExists(t *jm.DownloadTask) {
 		}
 		seen[tag] = struct{}{}
 		tags = append(tags, tag)
+	}
+	// 过滤名单在此再兜一次(快照点已过滤,但下载耗时长,名单可能中途变更)
+	if kept, dropped := jmFilterTagsByBlocklist(tags); len(dropped) > 0 {
+		jmLogDroppedTags("自动标签", dropped)
+		tags = kept
 	}
 	author := jmSyncAuthorName(t.Author)
 	if author == "" && len(tags) == 0 {

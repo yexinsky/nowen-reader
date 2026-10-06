@@ -532,6 +532,13 @@ export function JmSourcePanel() {
               <p className="mt-0.5 text-xs text-muted">
                 下载入库后,把该漫画的 JM 标签自动挂到书库记录(可在详情页手动增删)
               </p>
+              <p className="mt-0.5 text-xs text-muted">
+                不想要的标签可在
+                <Link to="/tag-manager" className="mx-0.5 text-accent hover:underline">
+                  标签管理 → 标签归一 → 过滤
+                </Link>
+                中拉黑,下载打标与标签补全都不会再写入
+              </p>
             </div>
             <button
               type="button"

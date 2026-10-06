@@ -1378,6 +1378,16 @@ autoDetect: "智能合集",
       vocabAddSuccess: "已加入词表",
       vocabRemoveSuccess: "已移出词表",
       vocabCountUnit: "个词表标签",
+      filtersTab: "过滤",
+      filtersDesc: "过滤名单：下载入库自动打标与标签补全时，命中的标签直接丢弃（不建标签、不挂链），从源头挡住上游脏标签污染标签库。匹配做繁简/大小写折叠，可预先拉黑库中还不存在的标签。",
+      filtersEmpty: "过滤名单为空，上游标签会全部写入标签库。",
+      filtersPickPlaceholder: "从已有标签中选择拉黑...",
+      filtersInputPlaceholder: "或输入标签名（可预先拉黑库中不存在的标签）",
+      filtersAdd: "加入名单",
+      filtersAddSuccess: "已加入过滤名单",
+      filtersRemoveSuccess: "已移出过滤名单",
+      filtersNotInLibrary: "未入库",
+      filtersCountUnit: "个过滤标签",
       // 候选簇
       totalComicsLabel: "涉及书目",
       mergeTargetLabel: "归并目标",
@@ -2746,6 +2756,16 @@ export interface Translations {
       vocabAddSuccess: string;
       vocabRemoveSuccess: string;
       vocabCountUnit: string;
+      filtersTab: string;
+      filtersDesc: string;
+      filtersEmpty: string;
+      filtersPickPlaceholder: string;
+      filtersInputPlaceholder: string;
+      filtersAdd: string;
+      filtersAddSuccess: string;
+      filtersRemoveSuccess: string;
+      filtersNotInLibrary: string;
+      filtersCountUnit: string;
       totalComicsLabel: string;
       mergeTargetLabel: string;
       merge: string;

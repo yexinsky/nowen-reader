@@ -16,6 +16,7 @@ import { apiPath } from "@/lib/base-path";
 import { useTranslation } from "@/lib/i18n";
 import { useToast } from "@/components/Toast";
 import { SearchableSelect } from "@/components/SearchableSelect";
+import { tagNormKey } from "@/lib/tagNorm";
 
 // ── Types (frozen contract: /api/tags/normalization/*, /api/tags/aliases) ──
 
@@ -93,6 +94,20 @@ interface VocabListResponse {
   list: VocabItem[];
 }
 
+/** 过滤名单条目：tagId=0 表示标签库尚无此标签（预防性拉黑） */
+interface TagFilterItem {
+  id: number;
+  name: string;
+  normKey: string;
+  tagId: number;
+  comicCount: number;
+  createdAt: string;
+}
+
+interface TagFilterListResponse {
+  list: TagFilterItem[];
+}
+
 type NormResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 const CLUSTER_PAGE_SIZE = 20;
@@ -133,7 +148,7 @@ function defaultTargetId(cluster: NormCluster): number {
   return sorted[0]?.id ?? 0;
 }
 
-type NormTab = "clusters" | "manual" | "operations" | "aliases" | "vocab";
+type NormTab = "clusters" | "manual" | "operations" | "aliases" | "vocab" | "filters";
 
 function SimplePager({
   page,
@@ -222,6 +237,12 @@ export function TagNormalizationPanel({
   const [vocabAddId, setVocabAddId] = useState(0);
   const [vocabTopN, setVocabTopN] = useState(60);
 
+  // 过滤名单（下载打标 / 标签补全的写入黑名单）
+  const [filters, setFilters] = useState<TagFilterItem[]>([]);
+  const [filterBusy, setFilterBusy] = useState(false);
+  const [filterPickId, setFilterPickId] = useState(0);
+  const [filterInput, setFilterInput] = useState("");
+
   const loadClusters = useCallback(
     async (page: number, silent = false): Promise<boolean> => {
       if (!silent) setClustersLoading(true);
@@ -275,6 +296,13 @@ export function TagNormalizationPanel({
     return true;
   }, []);
 
+  const loadFilters = useCallback(async (): Promise<boolean> => {
+    const r = await normRequest<TagFilterListResponse>("/api/tags/filters");
+    if (!r.ok) return false;
+    setFilters(r.data.list || []);
+    return true;
+  }, []);
+
   const refreshAll = useCallback(async () => {
     setInitialLoading(true);
     const results = await Promise.all([
@@ -283,12 +311,13 @@ export function TagNormalizationPanel({
       loadAliases(),
       loadIgnores(),
       loadVocab(),
+      loadFilters(),
     ]);
     setInitialLoading(false);
     if (n && results.some((ok) => !ok)) {
       toastError(n.loadFailed);
     }
-  }, [loadClusters, loadOperations, loadAliases, loadIgnores, loadVocab, clusterPage, opsPage, n, toastError]);
+  }, [loadClusters, loadOperations, loadAliases, loadIgnores, loadVocab, loadFilters, clusterPage, opsPage, n, toastError]);
 
   const handleToggle = () => {
     const next = !open;
@@ -477,12 +506,46 @@ export function TagNormalizationPanel({
   const sourceNameTrimmed = sourceName.trim();
   const targetCandidates = tags.filter((tg) => tg.name !== sourceNameTrimmed);
 
+  // ── 过滤名单 ──
+
+  const addFilters = async (names: string[]) => {
+    const cleaned = names.map((s) => s.trim()).filter(Boolean);
+    if (cleaned.length === 0) return;
+    setFilterBusy(true);
+    const r = await normRequest<{ ok: boolean; added: number; skipped: number }>(
+      "/api/tags/filters",
+      postJson({ names: cleaned })
+    );
+    setFilterBusy(false);
+    if (!r.ok) {
+      toastError(r.error);
+      return;
+    }
+    if (n) toastSuccess(n.filtersAddSuccess);
+    setFilterPickId(0);
+    setFilterInput("");
+    await loadFilters();
+  };
+
+  const handleRemoveFilter = async (id: number) => {
+    setFilterBusy(true);
+    const r = await normRequest<{ ok: boolean }>(`/api/tags/filters/${id}`, { method: "DELETE" });
+    setFilterBusy(false);
+    if (!r.ok) {
+      toastError(r.error);
+      return;
+    }
+    if (n) toastSuccess(n.filtersRemoveSuccess);
+    setFilters((prev) => prev.filter((f) => f.id !== id));
+  };
+
   const tabs: { key: NormTab; label?: string }[] = [
     { key: "clusters", label: n?.clustersTab },
     { key: "manual", label: n?.manualTab },
     { key: "operations", label: n?.operationsTab },
     { key: "aliases", label: n?.aliasesTab },
     { key: "vocab", label: n?.vocabTab },
+    { key: "filters", label: n?.filtersTab },
   ];
 
   return (
@@ -790,7 +853,7 @@ export function TagNormalizationPanel({
                 )}
               </div>
             </div>
-          ) : (
+          ) : tab === "vocab" ? (
             /* ── 目标词表 ── */
             <div className="space-y-3">
               <p className="text-xs text-muted">{n?.vocabDesc}</p>
@@ -858,6 +921,83 @@ export function TagNormalizationPanel({
               )}
               <div className="text-[10px] text-muted">
                 {vocab.length} {n?.vocabCountUnit}
+              </div>
+            </div>
+          ) : (
+            /* ── 过滤名单（下载打标 / 标签补全的写入黑名单） ── */
+            <div className="space-y-3">
+              <p className="text-xs text-muted">{n?.filtersDesc}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-[12rem] flex-1">
+                  <SearchableSelect
+                    value={filterPickId}
+                    onChange={setFilterPickId}
+                    options={tags
+                      .filter((tg) => !filters.some((f) => f.normKey === tagNormKey(tg.name)))
+                      .map((tg) => ({ value: tg.id, label: tg.name, hint: String(tg.count) }))}
+                    placeholder={n?.filtersPickPlaceholder}
+                    searchPlaceholder={n?.searchPlaceholder}
+                    noMatchText={t.common?.noSearchResults}
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const picked = tags.find((tg) => tg.id === filterPickId);
+                    if (picked) void addFilters([picked.name]);
+                  }}
+                  disabled={filterBusy || !filterPickId}
+                  className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:bg-accent/90 disabled:opacity-50"
+                >
+                  {filterBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Ban className="h-3 w-3" />}
+                  {n?.filtersAdd}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={filterInput}
+                  onChange={(e) => setFilterInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addFilters([filterInput]);
+                  }}
+                  placeholder={n?.filtersInputPlaceholder}
+                  className="h-7 min-w-0 flex-1 rounded-lg border border-border/50 bg-background px-2 text-xs text-foreground outline-none focus:border-accent/50"
+                />
+                <button
+                  onClick={() => void addFilters([filterInput])}
+                  disabled={filterBusy || !filterInput.trim()}
+                  className="flex shrink-0 items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                >
+                  {n?.filtersAdd}
+                </button>
+              </div>
+              {filters.length === 0 ? (
+                <div className="py-6 text-center text-xs text-muted">{n?.filtersEmpty}</div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {filters.map((f) => (
+                    <span
+                      key={f.id}
+                      className="flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-xs font-medium text-red-400"
+                      title={f.normKey}
+                    >
+                      {f.name}
+                      <span className="text-[10px] text-muted">
+                        {f.tagId > 0 ? `${f.comicCount} ${n?.comicsUnit}` : n?.filtersNotInLibrary}
+                      </span>
+                      <button
+                        onClick={() => void handleRemoveFilter(f.id)}
+                        disabled={filterBusy}
+                        title={n?.filtersRemoveSuccess}
+                        className="rounded-full px-0.5 text-muted transition-colors hover:text-red-400 disabled:opacity-50"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="text-[10px] text-muted">
+                {filters.length} {n?.filtersCountUnit}
               </div>
             </div>
           )}

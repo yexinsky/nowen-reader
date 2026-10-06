@@ -599,6 +599,22 @@ var Migrations = []Migration{
 			);`,
 		}, "\n"),
 	},
+	{
+		Version:     49,
+		Description: "Add TagFilter table for user-defined tag blocklist (download/backfill write filtering)",
+		SQL: strings.Join([]string{
+			// 标签过滤名单：下载入库自动打标与标签补全写入前的黑名单。
+			// 只存名字不引用 Tag——允许标签尚未入库时预先拉黑，标签被删除后名单仍保留；
+			// normKey 承载匹配口径（trim+小写+繁简折叠），繁简与大小写变体一并命中。
+			`CREATE TABLE IF NOT EXISTS "TagFilter" (
+				"id"        INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+				"name"      TEXT NOT NULL,
+				"normKey"   TEXT NOT NULL,
+				"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS "TagFilter_normKey_key" ON "TagFilter"("normKey");`,
+		}, "\n"),
+	},
 }
 
 // ensureMigrationsTable creates the migrations tracking table.

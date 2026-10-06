@@ -51,6 +51,21 @@ func registerContentRoutes(api *gin.RouterGroup) {
 		vocabAdmin.POST("", tagVocab.Update)
 	}
 
+	// 标签过滤名单（下载入库自动打标 / 标签补全的写入黑名单）— 读取需登录，写操作需管理员
+	tagFilter := NewTagFilterHandler()
+	filtersRead := api.Group("/tags/filters")
+	filtersRead.Use(middleware.AuthRequired())
+	{
+		filtersRead.GET("", tagFilter.List)
+	}
+
+	filtersAdmin := api.Group("/tags/filters")
+	filtersAdmin.Use(middleware.AdminRequired())
+	{
+		filtersAdmin.POST("", tagFilter.Add)
+		filtersAdmin.DELETE("/:id", tagFilter.Delete)
+	}
+
 	aliasesRead := api.Group("/tags/aliases")
 	aliasesRead.Use(middleware.AuthRequired())
 	{

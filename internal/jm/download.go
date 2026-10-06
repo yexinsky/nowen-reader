@@ -203,7 +203,8 @@ type DownloadManager struct {
 	order   []string
 	cancels map[string]context.CancelFunc
 
-	onZip func(*DownloadTask) // 归档完成回调(handler 注入:触发书库扫描)
+	onZip     func(*DownloadTask)     // 归档完成回调(handler 注入:触发书库扫描)
+	tagFilter func([]string) []string // 标签过滤钩子(handler 注入:过滤名单,见 SetTagFilter)
 }
 
 // NewDownloadManager 构造;tempRoot 为自有沙箱根(<DataDir>/jm/download-tmp)。
@@ -233,6 +234,26 @@ func (m *DownloadManager) SetOnZip(fn func(*DownloadTask)) {
 	m.mu.Lock()
 	m.onZip = fn
 	m.mu.Unlock()
+}
+
+// SetTagFilter 注册标签过滤钩子:上游标签写入任务快照前经此裁剪。
+// 任务快照即「入库后会挂到书库的标签」,过滤提前到快照点可让下载列表与
+// 实际写入口径一致(否则 UI 展示的标签数会大于实际挂上的)。nil = 不过滤。
+func (m *DownloadManager) SetTagFilter(fn func([]string) []string) {
+	m.mu.Lock()
+	m.tagFilter = fn
+	m.mu.Unlock()
+}
+
+// filterTags 应用标签过滤钩子(未注册时原样返回)。
+func (m *DownloadManager) filterTags(tags []string) []string {
+	m.mu.Lock()
+	fn := m.tagFilter
+	m.mu.Unlock()
+	if fn == nil {
+		return tags
+	}
+	return fn(tags)
 }
 
 // TempRoot 返回沙箱根目录(测试/诊断用)。
@@ -604,7 +625,7 @@ func (m *DownloadManager) resolveEpisodes(ctx context.Context, t *DownloadTask, 
 	var eps []downloadEpisode
 	if t.Aid != "" {
 		if data, err := m.svc.AnonClient().ComicDetail(ctx, t.Aid); err == nil {
-			tags := normalizeJmTags(listOf(dataMap(data)["tags"]))
+			tags := m.filterTags(normalizeJmTags(listOf(dataMap(data)["tags"])))
 			m.mu.Lock()
 			if tt, ok := m.tasks[t.ID]; ok {
 				if tt.Title == "" {

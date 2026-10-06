@@ -36,6 +36,34 @@ func TestNormalizeJmTags(t *testing.T) {
 	}
 }
 
+// TestDownloadManagerTagFilter 下载快照过滤钩子:注册后上游标签先经钩子裁剪再入快照
+// (任务列表展示的即"入库后会挂上的标签");未注册时原样通过。
+func TestDownloadManagerTagFilter(t *testing.T) {
+	m := NewDownloadManager(nil, t.TempDir())
+
+	// 未注册钩子:原样通过
+	in := []string{"巨乳", "DL版"}
+	if got := m.filterTags(in); len(got) != 2 {
+		t.Fatalf("未注册钩子应原样返回: %v", got)
+	}
+
+	m.SetTagFilter(func(tags []string) []string {
+		kept := make([]string, 0, len(tags))
+		for _, tag := range tags {
+			if tag != "DL版" {
+				kept = append(kept, tag)
+			}
+		}
+		return kept
+	})
+	if got := m.filterTags(in); len(got) != 1 || got[0] != "巨乳" {
+		t.Fatalf("钩子未生效: %v", got)
+	}
+	if in[0] != "巨乳" || in[1] != "DL版" {
+		t.Fatalf("钩子不得就地改写入参: %v", in)
+	}
+}
+
 func TestSettingsDownloadTagsDefaultAndPersist(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
