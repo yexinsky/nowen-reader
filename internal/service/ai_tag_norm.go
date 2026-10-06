@@ -87,11 +87,16 @@ func suggestTagMergesBatch(cfg AIConfig, candidates []TagNormCandidate, maxToken
 
 Rules:
 - Merge ONLY exact synonyms. Tags with related but DIFFERENT meanings (e.g. "少女" vs "萝莉", "swimsuit" vs "bikini") must NOT be merged
-- Choose the canonical "target" per group: the variant with the highest usage count; when counts are close, prefer the clearest Chinese name if present
+- For each group pick exactly ONE canonical "target" that the others merge into. Pick the name users would most naturally search and browse:
+  1) A plain, intuitive, mainstream term ALWAYS wins — e.g. a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"
+  2) Only when two variants are equally intuitive, the higher usage count wins
+  NEVER pick a target just because it has more comics.
 - Copy tag names VERBATIM from the provided list — never invent, translate or modify names
 - Each tag may appear in at most one group; a tag must never be both target and source
 - Return ONLY a JSON array, no extra text: [{"target":"<canonical>","sources":["<variant>",...]}]
-- If nothing is a duplicate, return []`
+- If nothing is a duplicate, return []
+
+Example: tags "巨乳 #340", "besar #520", "SHOUJO #3", "少女 #120" → [{"target":"巨乳","sources":["besar"]},{"target":"少女","sources":["SHOUJO"]}]  (besar has more comics but is NOT the target)`
 
 	var lines strings.Builder
 	for _, c := range candidates {
