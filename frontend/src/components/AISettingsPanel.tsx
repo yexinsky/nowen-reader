@@ -669,10 +669,10 @@ export function AISettingsPanel() {
                     <input
                       type="number"
                       min={100}
-                      max={32000}
+                      max={1000000}
                       step={100}
                       value={config.maxTokens}
-                      onChange={(e) => setConfig({ ...config, maxTokens: Math.max(100, Math.min(32000, parseInt(e.target.value) || 2000)) })}
+                      onChange={(e) => setConfig({ ...config, maxTokens: Math.max(100, Math.min(1000000, parseInt(e.target.value) || 2000)) })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
