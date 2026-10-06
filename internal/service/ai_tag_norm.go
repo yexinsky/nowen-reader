@@ -45,7 +45,8 @@ type TagMergeSuggestion struct {
 }
 
 // tagNormBatchMaxTokens 按批大小推算单批输出上限：
-// 每标签约 16 token 的建议输出预算，下限 4096、上限 8192（deepseek-chat 等的输出硬顶）。
+// 每标签约 16 token 的建议输出预算，夹取到 [4096, 8192]
+//（归一单批的现实输出量级，与具体模型的输出上限无关）。
 func tagNormBatchMaxTokens(batchSize int) int {
 	tokens := batchSize * 16
 	if tokens < 4096 {
