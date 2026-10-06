@@ -26,6 +26,10 @@ type LLMCallOptions struct {
 	Temperature *float64
 	// 图片列表（多模态）
 	Images []ImageContent
+	// 严格截断检查：OpenAI 兼容响应 finish_reason=length 时报错而非把半截内容
+	// 交给调用方解析（用于期望完整 JSON 结构体的场景，如标签归一）。
+	// 仅对 OpenAI 兼容/本地通道生效。
+	StrictTruncation bool
 }
 
 // CallCloudLLM 调用 LLM，支持重试和 token 统计。
@@ -125,7 +129,7 @@ func callLocalLLM(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCallOp
 	}
 
 	start := time.Now()
-	result, usage, err := callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images)
+	result, usage, err := callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images, false)
 	duration := time.Since(start).Milliseconds()
 
 	// 记录使用量
@@ -174,7 +178,7 @@ func callCloudLLMOnce(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCa
 	case "google":
 		return callGemini(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images)
 	default:
-		return callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images)
+		return callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images, opts.StrictTruncation)
 	}
 }
 
@@ -182,7 +186,7 @@ func callCloudLLMOnce(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCa
 // OpenAI Compatible Provider (含多模态)
 // ============================================================
 
-func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent) (string, tokenUsage, error) {
+func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent, strictTruncation bool) (string, tokenUsage, error) {
 	reqURL, err := resolveOpenAICompatibleEndpoint(apiURL, "chat/completions")
 	if err != nil {
 		return "", tokenUsage{}, err
@@ -263,6 +267,7 @@ func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string,
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -285,6 +290,12 @@ func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string,
 		PromptTokens: data.Usage.PromptTokens,
 		OutputTokens: data.Usage.CompletionTokens,
 		TotalTokens:  data.Usage.TotalTokens,
+	}
+
+	// 截断的半截 JSON 交给上层解析只会得到难懂的 unmarshal 错误；
+	// 严格模式下提前给出明确原因。
+	if strictTruncation && data.Choices[0].FinishReason == "length" {
+		return "", usage, fmt.Errorf("AI 输出被 max_tokens=%d 截断（finish_reason=length），请减小输入规模或提高输出上限", maxTokens)
 	}
 	return data.Choices[0].Message.Content, usage, nil
 }

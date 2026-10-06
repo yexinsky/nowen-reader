@@ -2,9 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/nowen-reader/nowen-reader/internal/service"
@@ -208,5 +210,123 @@ func TestAISuggestTagMergesStrictValidationAndApply(t *testing.T) {
 		`SELECT COUNT(*) FROM "ComicTag" ct JOIN "Tag" t ON t."id" = ct."tagId" WHERE ct."comicId" = 'ts-norm-1' AND t."name" IN ('巨乳','少女','汉化')`,
 	).Scan(&n); err != nil || n != 3 {
 		t.Fatalf("comic1 tags after merge = %d, want 3 (err=%v)", n, err)
+	}
+}
+
+// TestAISuggestTagMergesBatching 验证超过 250 个标签时分批调用 LLM 并合并结果。
+func TestAISuggestTagMergesBatching(t *testing.T) {
+	r := setupTestRouter(t)
+	cookie := registerAndLogin(t, r)
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	if err := store.BulkCreateComics([]struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"ts-batch-1", "tsbatch1.cbz", "TS Batch 1", 1000},
+	}); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+	// 510 个标签 → 应分 3 批（250+250+10）
+	names := make([]string, 510)
+	for i := range names {
+		names[i] = fmt.Sprintf("t%03d", i)
+	}
+	if err := store.AddTagsToComic("ts-batch-1", names); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !strings.HasSuffix(req.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		// 每批都返回同一建议：校验层应去重，最终只留一组
+		aiReply := `[{"target":"t000","sources":["t001"]}]`
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + strings.ReplaceAll(aiReply, `"`, `\"`) + `"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	if err := service.SaveAIConfig(testAIConfigWithURL(server.URL + "/v1")); err != nil {
+		t.Fatalf("SaveAIConfig failed: %v", err)
+	}
+
+	w := performAuthedRequest(r, "POST", "/api/ai/suggest-tag-merges", map[string]bool{}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("suggest-tag-merges = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("LLM calls = %d, want 3 (510 tags / batch 250)", got)
+	}
+	var resp struct {
+		Analyzed int `json:"analyzed"`
+		Groups   []struct {
+			Target struct {
+				Name string `json:"name"`
+			} `json:"target"`
+			Sources []struct {
+				Name string `json:"name"`
+			} `json:"sources"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response failed: %v", err)
+	}
+	if resp.Analyzed != 510 {
+		t.Fatalf("analyzed = %d, want 510", resp.Analyzed)
+	}
+	if len(resp.Groups) != 1 || resp.Groups[0].Target.Name != "t000" || len(resp.Groups[0].Sources) != 1 || resp.Groups[0].Sources[0].Name != "t001" {
+		t.Fatalf("groups = %#v, want exactly 1 (t000 <- t001)", resp.Groups)
+	}
+}
+
+// TestAISuggestTagMergesTruncationError 输出被 max_tokens 截断时应报明确的「截断」错误，
+// 而不是让半截 JSON 流入解析层。
+func TestAISuggestTagMergesTruncationError(t *testing.T) {
+	r := setupTestRouter(t)
+	cookie := registerAndLogin(t, r)
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	if err := store.BulkCreateComics([]struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"ts-trunc-1", "tstrunc1.cbz", "TS Trunc 1", 1000},
+	}); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+	if err := store.AddTagsToComic("ts-trunc-1", []string{"巨乳", "besar", "少女", "SHOUJO"}); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+
+	// 半截 JSON：内层数组闭合但整体未结束（复现 "unexpected end of JSON input" 的形态）
+	truncated := `[{"target":"巨乳","sources":["besar"]},{"target":"少女","sources":["SHOU`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !strings.HasSuffix(req.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + strings.ReplaceAll(truncated, `"`, `\"`) + `"},"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":4096,"total_tokens":4097}}`))
+	}))
+	defer server.Close()
+
+	if err := service.SaveAIConfig(testAIConfigWithURL(server.URL + "/v1")); err != nil {
+		t.Fatalf("SaveAIConfig failed: %v", err)
+	}
+
+	w := performAuthedRequest(r, "POST", "/api/ai/suggest-tag-merges", map[string]bool{}, cookie)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("truncated response = %d %s, want 500", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "截断") {
+		t.Fatalf("error should mention truncation: %s", w.Body.String())
 	}
 }

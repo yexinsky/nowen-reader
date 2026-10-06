@@ -85,7 +85,7 @@ func TestCallOpenAICompatibleAcceptsFullEndpoint(t *testing.T) {
 	defer server.Close()
 
 	cfg := AIConfig{CloudAPIKey: "test-key", CloudModel: "deepseek-ai/DeepSeek-V3.2"}
-	got, usage, err := callOpenAICompatible(cfg, server.URL+"/v1/chat/completions", "system", "hello", 32, 0.3, nil)
+	got, usage, err := callOpenAICompatible(cfg, server.URL+"/v1/chat/completions", "system", "hello", 32, 0.3, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,11 +7,24 @@ import (
 )
 
 // ============================================================
-// AI 标签归一：把内容标签清单（名称+用量）交给 LLM，
+// AI 标签归一：把内容标签清单（名称+用量）分批交给 LLM，
 // 找出「同一概念的不同写法」（译名、罗马音、繁简体、空格/连字符差异等）
 // 并给出归并分组（规范目标 + 待并入变体）。只做建议；
 // 是否落库由调用方严格校验后决定（复用归一工作台的合并逻辑）。
+//
+// 分批的原因：一次性送入数百标签时，重复组多的大库会输出上百组建议，
+// 极易撞上模型输出上限（如 deepseek-chat 8k）被截断成半截 JSON。
+// 每批 ≤250 个标签后，单批输出天然有界；批次间并行无依赖。
+// 代价：跨批的同义对（如「少女」在批1、「SHOUJO」在批2）本次不会被发现，
+// 机械归一预览（normKey 相同的对）不受影响，多跑几轮可逐步收敛。
 // ============================================================
+
+// tagNormBatchSize 每批送入 LLM 的标签数上限。
+const tagNormBatchSize = 250
+
+// tagNormMaxTokens 单批输出上限。250 标签最多产生 125 组建议，
+// 实际通常数十组，4096 足够且在各家输出上限之内。
+const tagNormMaxTokens = 4096
 
 // TagNormCandidate 参与归一分析的标签候选。
 type TagNormCandidate struct {
@@ -26,7 +39,7 @@ type TagMergeSuggestion struct {
 	Sources []string `json:"sources"`
 }
 
-// SuggestTagMerges 单次 LLM 调用，从标签清单中找出同义变体分组。
+// SuggestTagMerges 分批调用 LLM，从标签清单中找出同义变体分组并合并结果。
 // 调用方负责严格匹配：返回的名称必须与既有标签名完全相等才采用。
 func SuggestTagMerges(cfg AIConfig, candidates []TagNormCandidate) ([]TagMergeSuggestion, error) {
 	if !cfg.EnableCloudAI || cfg.CloudAPIKey == "" {
@@ -36,6 +49,24 @@ func SuggestTagMerges(cfg AIConfig, candidates []TagNormCandidate) ([]TagMergeSu
 		return []TagMergeSuggestion{}, nil
 	}
 
+	total := (len(candidates) + tagNormBatchSize - 1) / tagNormBatchSize
+	var all []TagMergeSuggestion
+	for i, start := 0, 0; start < len(candidates); i, start = i+1, start+tagNormBatchSize {
+		end := start + tagNormBatchSize
+		if end > len(candidates) {
+			end = len(candidates)
+		}
+		batchSuggestions, err := suggestTagMergesBatch(cfg, candidates[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("第 %d/%d 批分析失败: %w", i+1, total, err)
+		}
+		all = append(all, batchSuggestions...)
+	}
+	return all, nil
+}
+
+// suggestTagMergesBatch 单次 LLM 调用处理一批标签。
+func suggestTagMergesBatch(cfg AIConfig, candidates []TagNormCandidate) ([]TagMergeSuggestion, error) {
 	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. You will get content tags with usage counts. Find groups of tags that denote EXACTLY THE SAME concept: different spellings, translations (e.g. English / Japanese / Chinese), romanizations, abbreviations, Traditional/Simplified Chinese variants, extra/missing spaces, hyphens or punctuation.
 
 Rules:
@@ -53,8 +84,9 @@ Rules:
 	userPrompt := fmt.Sprintf("Tags (name #comicCount):\n%s\nGroup exact-synonym tags and return the JSON array.", lines.String())
 
 	content, err := CallCloudLLM(cfg, systemPrompt, userPrompt, &LLMCallOptions{
-		Scenario:  "norm_tags",
-		MaxTokens: 3000,
+		Scenario:         "norm_tags",
+		MaxTokens:        tagNormMaxTokens,
+		StrictTruncation: true,
 	})
 	if err != nil {
 		return nil, err
