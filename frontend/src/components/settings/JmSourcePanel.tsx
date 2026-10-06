@@ -268,9 +268,10 @@ export function JmSourcePanel() {
       await jmLogout();
       toast.success("已退出在线源登录");
     } catch (err) {
-      // 会话已失效(1002)时服务端会话已不存在,直接清本机登录态
-      if (isJmApiError(err) && err.code === 1002) {
-        toast.info("会话已失效,已清除本机登录态");
+      // 会话已失效时服务端会话无法销毁(1002=JM 服务端会话已不存在;
+      // 1401=站点登录失效),按用户登出意图直接清本机登录态
+      if (isJmApiError(err) && (err.code === 1002 || err.code === 1401)) {
+        toast.info(err.code === 1002 ? "会话已失效,已清除本机登录态" : "站点登录已失效,已清除本机登录态");
       } else {
         cleared = false;
         toast.error(errText(err, "退出登录失败"));

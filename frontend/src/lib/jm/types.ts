@@ -318,6 +318,8 @@ export const JM_ERROR_CODES = {
   NETWORK: 2002,
   NOT_FOUND: 3001,
   INTERNAL: 4000,
+  /** 客户端合成码(非后端契约):HTTP 401 但非 JM 包装体 = 站点(nowen)会话失效 */
+  SITE_UNAUTHORIZED: 1401,
 } as const;
 
 /* ── 标签/作者收藏(私有扩展,非 MOBILE_API.md 契约) ── */

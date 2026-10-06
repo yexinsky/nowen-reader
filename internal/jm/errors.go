@@ -72,8 +72,22 @@ func ClassifyError(err error, defaultMsg string) *APIError {
 	return classifyUpstreamError(err, defaultMsg)
 }
 
+// loginMarkers 上游「登录态无效」语义关键字(繁/简),client.go 信封路径与本分类器共用。
+// 只匹配中文词:ASCII 的 login 会误伤含登录域名的网络错误(dial tcp login.xxx refused)。
+var loginMarkers = []string{"登入", "登录"}
+
+// hasLoginSemantics 判断上游错误文本是否表达「需要登录/登录态无效」。
+func hasLoginSemantics(text string) bool {
+	for _, marker := range loginMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyUpstreamError 将任意错误映射为 APIError(live.py _map_live_error 同序):
-// *APIError 直通 → 资源不存在语义 → 上游错误 → 网络关键字 → 上游兜底。
+// *APIError 直通 → 资源不存在语义 → 登录语义 → 上游错误 → 网络关键字 → 上游兜底。
 func classifyUpstreamError(err error, defaultMsg string) *APIError {
 	if err == nil {
 		return nil
@@ -84,6 +98,12 @@ func classifyUpstreamError(err error, defaultMsg string) *APIError {
 	text := err.Error()
 	if strings.Contains(text, "MissingAlbumPhoto") || strings.Contains(text, "album/photo 不存在") {
 		return errNotFound("")
+	}
+	// 上游「未登录」语义(如 HTTP 403 + 「請先登入會員」裸文本,不经信封解析)
+	// → 1002:让前端走「清会话→跳登录」闭环,而非笼统的「JM 服务端返回错误」。
+	// 网络关键字刻意排在其后:登录语义优先级更高,且中文标记不会误伤 ASCII 的网络报错。
+	if hasLoginSemantics(text) {
+		return errUnauthorized()
 	}
 	for _, marker := range networkMarkers {
 		if strings.Contains(strings.ToLower(text), strings.ToLower(marker)) {

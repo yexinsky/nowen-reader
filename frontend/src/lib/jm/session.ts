@@ -6,8 +6,9 @@
  * - 模块级状态 + 订阅,useSyncExternalStore 供组件消费
  * - 401/code=1002 时由 client 调用 clearSession + 广播未授权事件
  *
- * 注意:JM 服务会话为进程内存表(TTL 7 天,服务重启即失效),
- * 登录失效属常态,前端统一走 onUnauthorized 处理。
+ * 注意:JM 服务会话服务端已落盘持久化 + 7 天滑动续期(连续 7 天不活跃才过期,
+ * 服务重启不再失效);进入 JM 区块时 JmGate 会主动校验(60s 节流),
+ * 失效仍属常态(重新登录即可),前端统一走 onUnauthorized 处理。
  */
 
 import { useSyncExternalStore, useCallback } from "react";
