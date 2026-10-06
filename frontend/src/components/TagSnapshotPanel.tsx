@@ -35,6 +35,7 @@ function summaryText(item: SnapshotItem): string {
     `情景 ${s.scenarios}`,
     `分类 ${s.categories}`,
     `分类关联 ${s.comicCategories}`,
+    `词表 ${s.vocab}`,
   ];
   return parts.join(" · ");
 }

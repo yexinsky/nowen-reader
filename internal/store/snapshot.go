@@ -63,6 +63,9 @@ type snapshotData struct {
 	Scenarios       [][]any  `json:"scenarios"`       // [id, name, color, sortOrder]
 	Categories      [][]any  `json:"categories"`      // [id, name, slug, icon, sortOrder]
 	ComicCategories [][]any  `json:"comicCategories"` // [comicId, categoryId]
+	// TagVocab 目标词表（tagId）。指针区分「本快照未采集词表」（旧快照/字段缺失，
+	// 恢复时保留恢复前词表）与「采集了但为空」（恢复为无词表）。
+	TagVocab *[]int `json:"tagVocab,omitempty"`
 }
 
 // snapshotSummary 供列表页展示的行数统计。
@@ -74,6 +77,7 @@ type snapshotSummary struct {
 	Scenarios       int `json:"scenarios"`
 	Categories      int `json:"categories"`
 	ComicCategories int `json:"comicCategories"`
+	Vocab           int `json:"vocab"`
 }
 
 // CreateSnapshot 捕获当前指定 domain 的全量状态并写入快照表。
@@ -278,6 +282,27 @@ func captureTagDomain() (snapshotData, snapshotSummary, error) {
 	}
 	summary.ComicCategories = len(data.ComicCategories)
 
+	// 目标词表（始终采集，空词表也写出空数组——与"字段缺失=旧快照"区分）
+	vocabIDs := []int{}
+	rows, err = db.Query(`SELECT "tagId" FROM "TagVocab" ORDER BY "createdAt" ASC, "tagId" ASC`)
+	if err != nil {
+		return data, summary, err
+	}
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return data, summary, err
+		}
+		vocabIDs = append(vocabIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return data, summary, err
+	}
+	data.TagVocab = &vocabIDs
+	summary.Vocab = len(vocabIDs)
+
 	return data, summary, nil
 }
 
@@ -314,6 +339,7 @@ type RestoreResult struct {
 	Scenarios       int   `json:"scenarios"`
 	Categories      int   `json:"categories"`
 	ComicCategories int   `json:"comicCategories"`
+	Vocab           int   `json:"vocab"`
 	SafetySnapshot  int64 `json:"safetySnapshotId"`
 }
 
@@ -347,6 +373,27 @@ func RestoreSnapshot(id int64) (RestoreResult, error) {
 		return RestoreResult{}, fmt.Errorf("failed to capture safety snapshot: %w", err)
 	}
 
+	// 旧快照未采集词表：恢复时保留恢复前的词表（删除 Tag 会级联清掉 TagVocab）
+	var preservedVocab []int
+	if data.TagVocab == nil {
+		rows, err := db.Query(`SELECT "tagId" FROM "TagVocab"`)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return RestoreResult{}, err
+			}
+			preservedVocab = append(preservedVocab, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return RestoreResult{}, err
+		}
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return RestoreResult{}, err
@@ -357,6 +404,7 @@ func RestoreSnapshot(id int64) (RestoreResult, error) {
 	for _, stmt := range []string{
 		`DELETE FROM "ComicTag"`,
 		`DELETE FROM "TagAlias"`,
+		`DELETE FROM "TagVocab"`,
 		`DELETE FROM "ComicCategory"`,
 		`DELETE FROM "Tag"`,
 		`DELETE FROM "TagScenario"`,
@@ -407,6 +455,26 @@ func RestoreSnapshot(id int64) (RestoreResult, error) {
 		}
 		result.Categories++
 	}
+	// 重建目标词表：新快照按快照内容还原；旧快照（未采集）保留恢复前词表，
+	// 仅保留在恢复后仍存在的标签（避免外键悬空）。
+	vocabToRestore := preservedVocab
+	if data.TagVocab != nil {
+		vocabToRestore = *data.TagVocab
+	}
+	for _, id := range vocabToRestore {
+		res, err := tx.Exec(
+			`INSERT INTO "TagVocab" ("tagId")
+			 SELECT ? WHERE EXISTS (SELECT 1 FROM "Tag" WHERE "id" = ?)`,
+			id, id,
+		)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			result.Vocab++
+		}
+	}
+
 	// 同步自增序列，保证恢复后新建行 id 不与恢复进来的 id 冲突
 	for _, tbl := range []string{"Tag", "TagScenario", "Category"} {
 		if _, err := tx.Exec(

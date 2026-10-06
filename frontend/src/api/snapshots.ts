@@ -30,6 +30,7 @@ export interface SnapshotSummary {
   scenarios: number;
   categories: number;
   comicCategories: number;
+  vocab: number;
 }
 
 export interface SnapshotRestoreResult {
@@ -76,6 +77,7 @@ export function parseSnapshotSummary(item: SnapshotItem): SnapshotSummary {
       scenarios: s.scenarios ?? 0,
       categories: s.categories ?? 0,
       comicCategories: s.comicCategories ?? 0,
+      vocab: s.vocab ?? 0,
     };
   } catch {
     return {
@@ -86,6 +88,7 @@ export function parseSnapshotSummary(item: SnapshotItem): SnapshotSummary {
       scenarios: 0,
       categories: 0,
       comicCategories: 0,
+      vocab: 0,
     };
   }
 }

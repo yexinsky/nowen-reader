@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -51,6 +52,10 @@ func TestSnapshotCaptureMutateRestoreRoundTrip(t *testing.T) {
 	catID := cat.ID
 	if err := BatchSetCategory([]string{"snap-1"}, []string{"test-cat"}); err != nil {
 		t.Fatalf("BatchSetCategory failed: %v", err)
+	}
+	// 词表：巨乳、少女 入词表
+	if err := AddTagsToVocabulary([]int{mustTagIDByName(t, "巨乳"), mustTagIDByName(t, "少女")}); err != nil {
+		t.Fatalf("AddTagsToVocabulary failed: %v", err)
 	}
 
 	// ── 捕获快照 ──
@@ -140,6 +145,22 @@ func TestSnapshotCaptureMutateRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("comic-category link after restore = %d (err=%v), want 1", n, err)
 	}
 
+	// 词表随快照还原（破坏阶段删掉的词表项应回来）
+	vocabList, err := ListTagVocabulary()
+	if err != nil {
+		t.Fatalf("ListTagVocabulary failed: %v", err)
+	}
+	vocabNames := map[string]bool{}
+	for _, v := range vocabList {
+		vocabNames[v.Name] = true
+	}
+	if len(vocabNames) != 2 || !vocabNames["巨乳"] || !vocabNames["少女"] {
+		t.Fatalf("vocabulary after restore = %v, want [巨乳 少女]", vocabNames)
+	}
+	if result.Vocab != 2 {
+		t.Fatalf("restore result vocab = %d, want 2", result.Vocab)
+	}
+
 	// ── 自增序列：恢复后新建标签 id 必须大于恢复回来的最大 id ──
 	if err := AddTagsToComic("snap-2", []string{"序列检查标签"}); err != nil {
 		t.Fatalf("AddTagsToComic (post-restore) failed: %v", err)
@@ -165,6 +186,75 @@ func TestSnapshotCaptureMutateRestoreRoundTrip(t *testing.T) {
 	}
 	if list[0].Kind != "auto" || list[0].Name != "恢复前自动保存" {
 		t.Fatalf("newest snapshot = %+v, want safety auto snapshot", list[0])
+	}
+}
+
+// TestSnapshotRestorePreservesVocabForLegacySnapshot 旧快照（载荷无词表字段）
+// 恢复时应保留「恢复前」的词表，而不是清空或回退。
+func TestSnapshotRestorePreservesVocabForLegacySnapshot(t *testing.T) {
+	setupTestDB(t)
+
+	if err := BulkCreateComics([]struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"snap-legacy-1", "snaplegacy1.cbz", "Snap Legacy 1", 1000},
+	}); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+	if err := AddTagsToComic("snap-legacy-1", []string{"巨乳", "少女"}); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+	juruID := mustTagIDByName(t, "巨乳")
+	shaoID := mustTagIDByName(t, "少女")
+
+	// 快照时刻：词表 = [巨乳]
+	if err := AddTagsToVocabulary([]int{juruID}); err != nil {
+		t.Fatalf("AddTagsToVocabulary failed: %v", err)
+	}
+	item, err := CreateSnapshot(SnapshotDomainTagCategory, "旧格式快照", "manual", "")
+	if err != nil {
+		t.Fatalf("CreateSnapshot failed: %v", err)
+	}
+
+	// 模拟旧版本快照：从载荷中移除 tagVocab 字段
+	var payload string
+	if err := db.QueryRow(`SELECT "data" FROM "Snapshot" WHERE "id" = ?`, item.ID).Scan(&payload); err != nil {
+		t.Fatalf("read snapshot payload failed: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(payload), &m); err != nil {
+		t.Fatalf("unmarshal payload failed: %v", err)
+	}
+	delete(m, "tagVocab")
+	legacyPayload, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal legacy payload failed: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE "Snapshot" SET "data" = ? WHERE "id" = ?`, string(legacyPayload), item.ID); err != nil {
+		t.Fatalf("update snapshot payload failed: %v", err)
+	}
+
+	// 恢复前把词表改成 [少女]（与快照时刻不同）
+	if err := RemoveTagsFromVocabulary([]int{juruID}); err != nil {
+		t.Fatalf("RemoveTagsFromVocabulary failed: %v", err)
+	}
+	if err := AddTagsToVocabulary([]int{shaoID}); err != nil {
+		t.Fatalf("AddTagsToVocabulary failed: %v", err)
+	}
+
+	if _, err := RestoreSnapshot(item.ID); err != nil {
+		t.Fatalf("RestoreSnapshot failed: %v", err)
+	}
+
+	list, err := ListTagVocabulary()
+	if err != nil {
+		t.Fatalf("ListTagVocabulary failed: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "少女" {
+		t.Fatalf("vocabulary after legacy restore = %#v, want preserved [少女]", list)
 	}
 }
 
