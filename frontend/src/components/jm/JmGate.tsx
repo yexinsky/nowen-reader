@@ -9,10 +9,42 @@
  * 由 useJmSession 感知并触发此处重定向。
  */
 
+import { useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 import { useJmSession } from "@/lib/jm/session";
+import { isJmApiError, jmProfile } from "@/lib/jm/client";
+import { JM_ERROR_CODES } from "@/lib/jm/types";
+
+/**
+ * 主动校验本地会话:进入 JM 区块时用 /auth/profile(纯本地快照,零外呼)验证
+ * token 是否仍有效。过期 → client 统一清会话+失效提示 → 守卫跳登录,
+ * 不再等到收藏等账号操作 401 才暴露。模块级 60s 节流(多页面共用一次);
+ * 网络失败不清理会话(避免瞬断误登出)。
+ */
+let lastValidatedAt = 0;
+let validating = false;
+const VALIDATE_INTERVAL = 60_000;
+
+function useJmSessionValidation(isLoggedIn: boolean) {
+  useEffect(() => {
+    if (!isLoggedIn || validating) return;
+    if (Date.now() - lastValidatedAt < VALIDATE_INTERVAL) return;
+    validating = true;
+    jmProfile()
+      .catch((err) => {
+        // JM 失效(1002)已由 client 统一处理(清会话+广播+失效提示);其余失败保留登录态并记日志
+        if (!(isJmApiError(err) && err.code === JM_ERROR_CODES.UNAUTHORIZED)) {
+          console.warn("[jm] 会话校验失败,保留本地登录态", err);
+        }
+      })
+      .finally(() => {
+        validating = false;
+        lastValidatedAt = Date.now();
+      });
+  }, [isLoggedIn]);
+}
 
 function LoginPrompt() {
   const location = useLocation();
@@ -23,6 +55,7 @@ function LoginPrompt() {
 /** 未登录时重定向登录页,已登录渲染 children */
 export function JmAuthGuard({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useJmSession();
+  useJmSessionValidation(isLoggedIn);
   if (!isLoggedIn) return <LoginPrompt />;
   return <>{children}</>;
 }

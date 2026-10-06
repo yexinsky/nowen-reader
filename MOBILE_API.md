@@ -13,7 +13,7 @@
 | `api/deps.py` | Bearer 鉴权依赖 `auth_session` |
 | `models.py` | Pydantic 请求模型（校验规则出处） |
 | `core/errors.py` | 错误码表 + `{code,msg,data}` 包装 + `ApiError` |
-| `core/security.py` | Bearer token 内存会话（TTL 7 天） |
+| `core/security.py` | Bearer token 会话（TTL 7 天滑动续期 + sessions.json 落盘；nowen-reader 私有差异） |
 | `core/store.py` | history/settings 本地 JSON 持久化 |
 | `core/live.py` | 真实模式：jmcomic SDK 对接上游、AES 登录、图片下载/还原/缓存 |
 | `core/mock.py` `core/mockdata.py` | Mock 模式端点实现与确定性 fixture |
@@ -64,8 +64,8 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 ### 0.4 鉴权与会话（`core/security.py` / `api/deps.py`）
 
 - 需鉴权端点校验请求头 `Authorization: Bearer <token>`（`bearer` 大小写不敏感），无效抛 `1002`/401。
-- token：服务端 `secrets.token_hex(32)` 随机 **64 hex**；会话存**进程内存表**，**TTL 7 天**（自创建时刻起算，惰性清理）。
-- **服务重启即全部失效**（内存表），前端需处理 401 重登（`api.js` 收到 401/code=1002 时清会话并广播事件跳登录页）。
+- token：服务端 `crypto/rand` 32 字节随机 **64 hex**；会话存**进程内存表 + `<DataDir>/jm/sessions.json` 落盘**（0600，tmp 原子替换），**TTL 7 天滑动续期**——鉴权命中且距上次续期超过 24h 时自动续满 7 天，**连续 7 天不活跃才过期**（nowen-reader 私有实现；与 Python 版「自创建起算、重启即失效」的差异见 CHANGELOG）。
+- **服务重启不再失效**（sessions.json 恢复，过期条目加载时丢弃；文件损坏按空表处理）；前端仍需处理 401 重登（`api.js` 收到 401/code=1002 时清会话并广播事件跳登录页），且进入 JM 区块时主动调 `/api/auth/profile` 校验（60s 节流），过期立即跳登录而非等账号操作暴露。
 - live 模式会话内保存该用户的 jmcomic 客户端（登录 cookies）与建会话时的代理快照 `proxy_key`；设置中代理变更后会话客户端**惰性重建并搬运 cookies**（保持登录态）。
 - 多端点并发登录各自持有独立 token，互不影响；`POST /api/auth/logout` 销毁对应会话。
 

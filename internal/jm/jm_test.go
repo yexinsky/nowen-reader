@@ -113,6 +113,21 @@ func TestClassifyUpstreamError(t *testing.T) {
 	if e := classifyUpstreamError(discardError("something weird"), ""); e.Code != CodeUpstream {
 		t.Fatalf("兜底应映射 2001, got %d", e.Code)
 	}
+	// 上游「未登录」语义(裸 HTTP 错误文本,不经信封解析)→ 1002
+	if e := classifyUpstreamError(discardError("HTTP 403: 請先登入會員"), ""); e.Code != CodeUnauthorized {
+		t.Fatalf("上游未登录语义(繁)应映射 1002, got %d", e.Code)
+	}
+	if e := classifyUpstreamError(discardError("HTTP 500: 请先登录后再操作"), ""); e.Code != CodeUnauthorized {
+		t.Fatalf("上游未登录语义(简)应映射 1002, got %d", e.Code)
+	}
+	// ASCII 的 login 不是登录语义:含登录域名的网络错误仍应为 2002
+	if e := classifyUpstreamError(discardError(`Get "https://login.example.com": dial tcp: connection refused`), ""); e.Code != CodeNetwork {
+		t.Fatalf("含 login 域名的网络错误应仍为 2002, got %d", e.Code)
+	}
+	// *APIError 直通优先于文本识别:上游信封已定的业务码不被改写
+	if e := classifyUpstreamError(errBadCredentials(), ""); e.Code != CodeBadCredentials {
+		t.Fatalf("凭据错误直通失败, got %d", e.Code)
+	}
 }
 
 type discardError string

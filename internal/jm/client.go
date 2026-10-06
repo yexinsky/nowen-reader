@@ -54,10 +54,16 @@ func newHTTPClient(proxy string) *http.Client {
 }
 
 // NewClient 构建绑定 proxy(空=直连)与 cookies(可空)的上游客户端。
+// 传入 map 一律拷贝:调用方(会话表)持有的同一 map 会被 save() 遍历,
+// 而客户端 bootstrap 会经 setCookie 写入,共享引用会构成并发读写。
 func NewClient(proxy string, cookies map[string]string) *Client {
+	owned := make(map[string]string, len(cookies))
+	for k, v := range cookies {
+		owned[k] = v
+	}
 	c := &Client{
 		http:       newHTTPClient(proxy),
-		cookies:    cookies,
+		cookies:    owned,
 		appVersion: defaultAppVersion,
 	}
 	// 进程级固定 ts(SDK FLAG_USE_FIX_TIMESTAMP):首个客户端创建时确定,全程复用
@@ -310,7 +316,7 @@ func (c *Client) mapUpstreamBusinessError(code int, msg string, raw []byte) erro
 		return errCaptchaRequired()
 	}
 	// 上游会员态校验失败的典型文案(繁/简):「請先登入會員」等 → 1002
-	if strings.Contains(msg, "登入") || strings.Contains(msg, "登录") {
+	if hasLoginSemantics(msg) {
 		return errUnauthorized()
 	}
 	detail := fmt.Sprintf("上游 code=%d msg=%s body=%s", code, msg, truncate(string(raw), 150))

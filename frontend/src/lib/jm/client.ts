@@ -8,6 +8,7 @@
  * - code=1002/HTTP 401 → 清会话并广播未授权,抛 JmApiError
  * - 其余非 0 → 抛 JmApiError(业务失败 HTTP 仍为 200)
  * - 网络层失败(服务不可达/超时)→ 抛 code=2002 语义的 JmApiError
+ * - 站点会话失效(HTTP 401 非 JM 包装体)→ 抛 code=1401、不清 JM 会话
  */
 
 import { jmApiUrl } from "./config";
@@ -131,10 +132,24 @@ async function jmRequest<T>(path: string, options: JmRequestOptions = {}): Promi
   }
   clearTimeout(timeoutId);
 
-  // 401:统一会话失效处理
+  // 401:区分 JM 会话失效(code=1002 包装体)与站点会话失效(纯 {"error":...})。
+  // 仅 JM 失效才清会话+广播跳 /jm/login;站点失效不清 JM 会话(交由站点登录流程,
+  // 否则站点 cookie 过期会把用户误导到 JM 登录页且永远登不进去)。
+  // 非 JSON 响应体(反向代理/网关 Basic Auth 401 等)不能确认是 JM 失效,保守不清会话。
   if (res.status === 401) {
-    _fireJmUnauthorized();
-    throw new JmApiError(JM_ERROR_CODES.UNAUTHORIZED, "登录已失效,请重新登录", { httpStatus: 401 });
+    let body: { code?: unknown } | null = null;
+    try {
+      body = (await res.json()) as { code?: unknown };
+    } catch {
+      // 保留 null → 走下方站点失效分支
+    }
+    if (body?.code === JM_ERROR_CODES.UNAUTHORIZED) {
+      _fireJmUnauthorized();
+      throw new JmApiError(JM_ERROR_CODES.UNAUTHORIZED, "登录已失效,请重新登录", { httpStatus: 401 });
+    }
+    throw new JmApiError(JM_ERROR_CODES.SITE_UNAUTHORIZED, "站点登录已失效,请刷新页面重新登录站点", {
+      httpStatus: 401,
+    });
   }
 
   // 422:参数校验失败(FastAPI 默认结构,非包装体)

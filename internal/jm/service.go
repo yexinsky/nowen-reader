@@ -34,7 +34,7 @@ func NewService(dataDir, envProxy string) *Service {
 	store := NewStore(dataDir)
 	svc := &Service{
 		Store:    store,
-		Sessions: NewSessionManager(),
+		Sessions: NewSessionManager(dataDir),
 		envProxy: envProxy,
 	}
 	svc.backend = NewBackend(store, svc.Sessions)
