@@ -50,6 +50,40 @@ func TestValidateTagMergeGroups(t *testing.T) {
 	}
 }
 
+// TestValidateTagMergeGroupsNewTargets 新建目标（new=true）的校验规则。
+func TestValidateTagMergeGroupsNewTargets(t *testing.T) {
+	candidates := []store.TagVariant{
+		{ID: 1, Name: "besar", ComicCount: 10},
+		{ID: 2, Name: "SHOUJO", ComicCount: 5},
+	}
+
+	suggestions := []service.TagMergeSuggestion{
+		// 合法新建：目标不在候选中、无同 normKey 冲突
+		{Target: "巨乳", Sources: []string{"besar"}, New: true},
+		// 新建目标与既有候选同 normKey（仅大小写差异）→ 丢弃，交给既有标签处理
+		{Target: "shoujo", Sources: []string{"SHOUJO"}, New: true},
+		// 与已采用的新建目标重名 → 丢弃
+		{Target: "巨乳", Sources: []string{"SHOUJO"}, New: true},
+		// 合法新建：另一个目标
+		{Target: "少女", Sources: []string{"SHOUJO"}, New: true},
+		// 标了 new 但名字其实是既有候选 → 按既有标签处理（普通路径）；
+		// 来源与目标同名被剔除 → 空组丢弃
+		{Target: "besar", Sources: []string{"besar"}, New: true},
+	}
+
+	groups := validateTagMergeGroups(suggestions, candidates)
+	if len(groups) != 2 {
+		t.Fatalf("groups = %#v, want exactly 2", groups)
+	}
+	g0, g1 := groups[0], groups[1]
+	if !g0.NewTarget || g0.Target.ID != 0 || g0.Target.Name != "巨乳" || len(g0.Sources) != 1 || g0.Sources[0].Name != "besar" {
+		t.Fatalf("group[0] = %#v, want new target 巨乳 <- besar", g0)
+	}
+	if !g1.NewTarget || g1.Target.Name != "少女" || len(g1.Sources) != 1 || g1.Sources[0].Name != "SHOUJO" {
+		t.Fatalf("group[1] = %#v, want new target 少女 <- SHOUJO", g1)
+	}
+}
+
 // TestAISuggestTagMergesGuards 路由守卫：未登录 401、AI 未配置 422、无标签 200 空结果。
 func TestAISuggestTagMergesGuards(t *testing.T) {
 	r := setupTestRouter(t)
@@ -105,10 +139,10 @@ func TestAISuggestTagMergesStrictValidationAndApply(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("BulkCreateComics failed: %v", err)
 	}
-	if err := store.AddTagsToComic("ts-norm-1", []string{"巨乳", "besar", "少女", "SHOUJO", "汉化"}); err != nil {
+	if err := store.AddTagsToComic("ts-norm-1", []string{"巨乳", "少女", "besar", "SHOUJO", "汉化"}); err != nil {
 		t.Fatalf("AddTagsToComic failed: %v", err)
 	}
-	if err := store.AddTagsToComic("ts-norm-2", []string{"besar", "SHOUJO"}); err != nil {
+	if err := store.AddTagsToComic("ts-norm-2", []string{"巨乳", "少女", "besar", "SHOUJO"}); err != nil {
 		t.Fatalf("AddTagsToComic failed: %v", err)
 	}
 	// 预先忽略「汉化」簇 → 汉化不进候选，AI 提及也会被丢弃
@@ -116,7 +150,7 @@ func TestAISuggestTagMergesStrictValidationAndApply(t *testing.T) {
 		t.Fatalf("IgnoreTagNormKey failed: %v", err)
 	}
 
-	// 假 LLM：
+	// 假 LLM（规范池=[巨乳,少女]，变体批=[besar,SHOUJO]）：
 	// - 巨乳←besar+未知名+汉化(已忽略) → 有效组，仅 besar 入组
 	// - 少女←SHOUJO → 有效组
 	// - SHOUJO←少女（少女已被占用）→ 丢弃
@@ -178,15 +212,15 @@ func TestAISuggestTagMergesStrictValidationAndApply(t *testing.T) {
 	if g0.Target.Name != "巨乳" || len(g0.Sources) != 1 || g0.Sources[0].Name != "besar" {
 		t.Fatalf("group[0] = %#v", g0)
 	}
-	// comic1 已有巨乳，只有 comic2 实际新增关联 → moved = 1
-	if !g0.Applied || g0.ComicCount != 1 || g0.Error != "" {
+	// comic1、comic2 本就都带有巨乳/少女，合并只消除变体、无实际迁移 → moved = 0
+	if !g0.Applied || g0.ComicCount != 0 || g0.Error != "" {
 		t.Fatalf("group[0] apply result = %#v", g0)
 	}
 	if g1.Target.Name != "少女" || len(g1.Sources) != 1 || g1.Sources[0].Name != "SHOUJO" {
 		t.Fatalf("group[1] = %#v", g1)
 	}
-	// comic1 本就带少女标签，只有 comic2 实际新增关联 → moved = 1
-	if !g1.Applied || g1.ComicCount != 1 || g1.Error != "" {
+	// 同上：SHOUJO 并入少女，两本都已有少女 → moved = 0
+	if !g1.Applied || g1.ComicCount != 0 || g1.Error != "" {
 		t.Fatalf("group[1] apply result = %#v", g1)
 	}
 
@@ -260,8 +294,8 @@ func TestAISuggestTagMergesBatching(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("suggest-tag-merges = %d %s, want 200", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(&calls); got != 3 {
-		t.Fatalf("LLM calls = %d, want 3 (510 tags / batch 250)", got)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("LLM calls = %d, want 2 (510 tags: pool 150 + variants 360 / batch 250)", got)
 	}
 	var resp struct {
 		Analyzed int `json:"analyzed"`
@@ -349,6 +383,134 @@ func TestAISuggestTagMergesBatchSizeConfig(t *testing.T) {
 	}
 	if resp.Analyzed != 510 || len(resp.Groups) != 1 || resp.Groups[0].Target.Name != "b000" {
 		t.Fatalf("analyzed=%d groups=%#v, want 510 + 1 group (b000)", resp.Analyzed, resp.Groups)
+	}
+}
+
+// TestAISuggestTagMergesNewTargetApply 新建目标端到端：
+// AI 标记 new=true 的组在 apply 时自动创建标签并合并；手动 apply 接口
+// 的 newTargetName 分支（新建与复用）同样可用。
+func TestAISuggestTagMergesNewTargetApply(t *testing.T) {
+	r := setupTestRouter(t)
+	cookie := registerAndLogin(t, r)
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	if err := store.BulkCreateComics([]struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"ts-newtg-1", "tsnewtg1.cbz", "TS NewTg 1", 1000},
+		{"ts-newtg-2", "tsnewtg2.cbz", "TS NewTg 2", 2000},
+	}); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+	// 两个候选：besar(id1) 进规范池，SHOUJO(id2) 进变体批
+	if err := store.AddTagsToComic("ts-newtg-1", []string{"besar", "SHOUJO"}); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+
+	aiReply := `[{"target":"巨乳","sources":["besar","SHOUJO"],"new":true}]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !strings.HasSuffix(req.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + strings.ReplaceAll(aiReply, `"`, `\"`) + `"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	if err := service.SaveAIConfig(testAIConfigWithURL(server.URL + "/v1")); err != nil {
+		t.Fatalf("SaveAIConfig failed: %v", err)
+	}
+
+	w := performAuthedRequest(r, "POST", "/api/ai/suggest-tag-merges", map[string]bool{"apply": true}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("suggest-tag-merges = %d %s, want 200", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Groups []struct {
+			Target struct {
+				Name string `json:"name"`
+				ID   int    `json:"id"`
+			} `json:"target"`
+			NewTarget  bool `json:"newTarget"`
+			Applied    bool `json:"applied"`
+			ComicCount int  `json:"comicCount"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response failed: %v", err)
+	}
+	if len(resp.Groups) != 1 {
+		t.Fatalf("groups = %#v, want 1", resp.Groups)
+	}
+	g := resp.Groups[0]
+	if !g.NewTarget || g.Target.ID != 0 || g.Target.Name != "巨乳" || !g.Applied || g.ComicCount != 1 {
+		t.Fatalf("group = %#v, want new target 巨乳 applied with 1 comic moved", g)
+	}
+
+	// 落库验证：新标签创建，两个源标签并入（别名+删除）
+	var n int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM "Tag" WHERE "name" = '巨乳'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("new tag 巨乳 should exist (n=%d, err=%v)", n, err)
+	}
+	if err := store.DB().QueryRow(
+		`SELECT COUNT(*) FROM "ComicTag" ct JOIN "Tag" t ON t."id" = ct."tagId" WHERE ct."comicId" = 'ts-newtg-1' AND t."name" = '巨乳'`,
+	).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("comic should have new tag 巨乳 (n=%d, err=%v)", n, err)
+	}
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM "Tag" WHERE "name" IN ('besar','SHOUJO')`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("source tags should be gone (n=%d, err=%v)", n, err)
+	}
+
+	// 手动 apply 接口：newTargetName 指向已存在标签 → 复用（created=false）
+	if err := store.AddTagsToComic("ts-newtg-2", []string{"besar2"}); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+	besar2ID := 0
+	if err := store.DB().QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = 'besar2'`).Scan(&besar2ID); err != nil {
+		t.Fatalf("besar2 missing: %v", err)
+	}
+	juruID := 0
+	if err := store.DB().QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = '巨乳'`).Scan(&juruID); err != nil {
+		t.Fatalf("巨乳 missing: %v", err)
+	}
+	w = performAuthedRequest(r, "POST", "/api/tags/normalization/apply",
+		map[string]interface{}{"newTargetName": "巨乳", "sourceTagIds": []int{besar2ID}}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("apply with existing newTargetName = %d %s, want 200", w.Code, w.Body.String())
+	}
+	var applyResp struct {
+		OK          bool `json:"ok"`
+		TargetTagID int  `json:"targetTagId"`
+		Created     bool `json:"created"`
+		ComicCount  int  `json:"comicCount"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &applyResp); err != nil || !applyResp.OK {
+		t.Fatalf("apply response = %s (err=%v)", w.Body.String(), err)
+	}
+	if applyResp.Created || applyResp.TargetTagID != juruID || applyResp.ComicCount != 1 {
+		t.Fatalf("apply resp = %#v, want reuse 巨乳 (created=false, 1 moved)", applyResp)
+	}
+
+	// 手动 apply 接口：newTargetName 不存在 → 新建（created=true）
+	// （besar2 已在上一步并入巨乳被删除，另造一个新源标签）
+	if err := store.AddTagsToComic("ts-newtg-2", []string{"zzz"}); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+	zzzID := 0
+	if err := store.DB().QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = 'zzz'`).Scan(&zzzID); err != nil {
+		t.Fatalf("zzz missing: %v", err)
+	}
+	w = performAuthedRequest(r, "POST", "/api/tags/normalization/apply",
+		map[string]interface{}{"newTargetName": "全新标签", "sourceTagIds": []int{zzzID}}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("apply with fresh newTargetName = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &applyResp); err != nil || !applyResp.OK || !applyResp.Created {
+		t.Fatalf("apply resp = %s (err=%v), want created=true", w.Body.String(), err)
 	}
 }
 

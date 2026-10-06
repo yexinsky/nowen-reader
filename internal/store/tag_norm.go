@@ -187,6 +187,42 @@ func NormalizeTagName(rawName string) (int, error) {
 	return ix.resolve(rawName)
 }
 
+// ResolveOrCreateCanonicalTag 为合并目标解析或创建标签：
+// 精确名命中 → 复用（created=false）；同 normKey 既有标签 → 复用最早创建的
+// （created=false）；都没有 → 新建（created=true）。
+// 供 AI 归一的「新建目标」与手动合并的「目标不存在时创建」使用。
+func ResolveOrCreateCanonicalTag(rawName string) (tagID int, created bool, err error) {
+	name := strings.TrimSpace(rawName)
+	if name == "" {
+		return 0, false, errors.New("tag name is empty")
+	}
+
+	// 精确名命中（含别名目标语义之外的既有标签）
+	if err := db.QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = ?`, name).Scan(&tagID); err == nil {
+		return tagID, false, nil
+	} else if err != sql.ErrNoRows {
+		return 0, false, err
+	}
+
+	// 同 normKey 既有标签 → 复用最早创建的（与写入口 resolve 语义一致）
+	ix, err := loadTagNormIndex()
+	if err != nil {
+		return 0, false, err
+	}
+	if group := ix.groups[TagNormKey(name)]; len(group) > 0 {
+		return group[0], false, nil
+	}
+
+	// 新建（并发同名冲突则取既有行）
+	if _, err := db.Exec(`INSERT INTO "Tag" ("name") VALUES (?) ON CONFLICT("name") DO NOTHING`, name); err != nil {
+		return 0, false, err
+	}
+	if err := db.QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = ?`, name).Scan(&tagID); err != nil {
+		return 0, false, err
+	}
+	return tagID, true, nil
+}
+
 // ============================================================
 // 合并 apply / 撤销 undo
 // ============================================================

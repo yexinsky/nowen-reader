@@ -255,10 +255,11 @@ interface AINormTag {
   comicCount: number;
 }
 
-/** AI 标签归一：一组归并建议（变体 → 规范标签） */
+/** AI 标签归一：一组归并建议（变体 → 规范标签）；newTarget=true 时 target 为待新建标签 */
 interface AINormGroup {
   target: AINormTag;
   sources: AINormTag[];
+  newTarget?: boolean;
   applied?: boolean;
   comicCount?: number;
   error?: string;
@@ -833,10 +834,11 @@ export default function TagManagerPage() {
       const res = await fetch(apiPath("/api/tags/normalization/apply"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetTagId: group.target.id,
-          sourceTagIds: group.sources.map((s) => s.id),
-        }),
+        body: JSON.stringify(
+          group.newTarget
+            ? { newTargetName: group.target.name, sourceTagIds: group.sources.map((s) => s.id) }
+            : { targetTagId: group.target.id, sourceTagIds: group.sources.map((s) => s.id) }
+        ),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1258,7 +1260,7 @@ export default function TagManagerPage() {
             </div>
             <p className="text-xs text-muted">
               {aiMode === "normalize"
-                ? "AI 分析内容标签，找出语义完全相同的不同写法（译名、罗马音、繁简体、空格差异等）并给出归并建议。归并会写入别名并记入操作日志，可在标签归一工作台撤销。"
+                ? "AI 以高用量标签为规范池，把低用量的变体（译名、罗马音、繁简体、空格差异等）归入其中；既有标签都不合适时会建议新建更规范的标签（卡片标注「新建」，合并时自动创建）。归并会写入别名并记入操作日志，可在标签归一工作台撤销。"
                 : "基于书库中的漫画/小说内容，使用 AI 自动分析并推荐合适的标签或分类。"}
             </p>
 
@@ -1350,8 +1352,14 @@ export default function TagManagerPage() {
                           ))}
                           <span className="text-muted">→</span>
                           <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
-                            {g.target.name} <span className="text-[10px]">{g.target.comicCount}</span>
+                            {g.target.name}
+                            {!g.newTarget && <span className="text-[10px]"> {g.target.comicCount}</span>}
                           </span>
+                          {g.newTarget && (
+                            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
+                              新建
+                            </span>
+                          )}
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
                           {g.applied ? (

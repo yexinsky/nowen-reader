@@ -22,6 +22,10 @@ import (
 // aiNormMaxCandidates 单次交给 AI 分析的最大标签数（按用量降序截取）。
 const aiNormMaxCandidates = 800
 
+// aiNormTargetPoolSize 规范池大小：用量降序头部的这些标签作为优先合并目标；
+// 候选不足时取一半，保证留有变体。由 service 提示词完整带入每个变体批。
+const aiNormTargetPoolSize = 150
+
 // aiNormTagItem 响应中的标签条目。
 type aiNormTagItem struct {
 	ID         int    `json:"id"`
@@ -30,9 +34,11 @@ type aiNormTagItem struct {
 }
 
 // aiNormGroupItem 一组归并建议（已严格校验、映射到真实标签）。
+// NewTarget=true 表示目标不在既有标签中，应用时按名称新建。
 type aiNormGroupItem struct {
 	Target     aiNormTagItem   `json:"target"`
 	Sources    []aiNormTagItem `json:"sources"`
+	NewTarget  bool            `json:"newTarget"`
 	Applied    bool            `json:"applied"`
 	ComicCount int             `json:"comicCount"`
 	Error      string          `json:"error,omitempty"`
@@ -41,20 +47,40 @@ type aiNormGroupItem struct {
 // validateTagMergeGroups 对 AI 建议做严格校验（纯函数，便于单测）：
 //   - 名称 trim 后必须命中候选清单；未知来源名直接丢弃，不整组否决；
 //   - target 未知或已被其他组占用 → 整组丢弃；
+//   - New 组：目标允许不在候选清单中，但不得与任何候选同 normKey
+//     （同键差异应由既有标签/机械预览处理），来源与目标同 normKey 的剔除；
 //   - 来源与 target 相同、来源重复去重；去重后来源为空 → 丢弃；
 //   - 任一来源已被其他组占用 → 整组丢弃（保证组间互不重叠，落库顺序无关）。
 func validateTagMergeGroups(suggestions []service.TagMergeSuggestion, candidates []store.TagVariant) []aiNormGroupItem {
 	byName := make(map[string]store.TagVariant, len(candidates))
+	normKeys := make(map[string]string, len(candidates)) // normKey → 首个候选名
 	for _, t := range candidates {
 		byName[t.Name] = t
+		k := store.TagNormKey(t.Name)
+		if _, ok := normKeys[k]; !ok {
+			normKeys[k] = t.Name
+		}
 	}
 
 	used := make(map[string]bool)
+	newUsed := make(map[string]bool) // 已采用的新建目标名
 	groups := []aiNormGroupItem{}
 	for _, s := range suggestions {
 		targetName := strings.TrimSpace(s.Target)
-		target, ok := byName[targetName]
-		if !ok || used[targetName] {
+		target, targetExists := byName[targetName]
+		isNew := s.New && !targetExists
+		if !targetExists && !s.New {
+			continue // target 未知且未声明新建
+		}
+		if targetExists && used[targetName] {
+			continue
+		}
+		if isNew && newUsed[targetName] {
+			continue
+		}
+		newKey := store.TagNormKey(targetName)
+		if isNew && normKeys[newKey] != "" {
+			// 声明新建却与既有候选同键（仅繁简/大小写差异）→ 交由既有标签处理，丢弃
 			continue
 		}
 
@@ -65,6 +91,9 @@ func validateTagMergeGroups(suggestions []service.TagMergeSuggestion, candidates
 			name := strings.TrimSpace(raw)
 			if name == targetName || seen[name] {
 				continue
+			}
+			if isNew && store.TagNormKey(name) == newKey {
+				continue // 同键来源并入新建目标会空转，剔除
 			}
 			seen[name] = true
 			v, ok := byName[name]
@@ -81,16 +110,21 @@ func validateTagMergeGroups(suggestions []service.TagMergeSuggestion, candidates
 			continue
 		}
 
-		used[targetName] = true
+		item := aiNormGroupItem{Sources: sources}
+		if isNew {
+			newUsed[targetName] = true
+			item.NewTarget = true
+			item.Target = aiNormTagItem{Name: targetName}
+		} else {
+			used[targetName] = true
+			item.Target = aiNormTagItem{ID: target.ID, Name: target.Name, ComicCount: target.ComicCount}
+		}
 		for name := range seen {
 			if _, ok := byName[name]; ok {
 				used[name] = true
 			}
 		}
-		groups = append(groups, aiNormGroupItem{
-			Target:  aiNormTagItem{ID: target.ID, Name: target.Name, ComicCount: target.ComicCount},
-			Sources: sources,
-		})
+		groups = append(groups, item)
 	}
 	return groups
 }
@@ -149,7 +183,16 @@ func (h *AIHandler) SuggestTagMerges(c *gin.Context) {
 	for i, t := range candidates {
 		aiCandidates[i] = service.TagNormCandidate{Name: t.Name, Count: t.ComicCount}
 	}
-	suggestions, err := service.SuggestTagMerges(cfg, aiCandidates)
+
+	// 两段式切分：用量降序头部为规范池（优先目标），其余为待归一变体
+	poolSize := len(candidates) / 2
+	if poolSize > aiNormTargetPoolSize {
+		poolSize = aiNormTargetPoolSize
+	}
+	pool := aiCandidates[:poolSize]
+	variants := aiCandidates[poolSize:]
+
+	suggestions, err := service.SuggestTagMerges(cfg, pool, variants)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -164,11 +207,27 @@ func (h *AIHandler) SuggestTagMerges(c *gin.Context) {
 			return
 		}
 		for i := range groups {
-			sourceIDs := make([]int, len(groups[i].Sources))
-			for j, s := range groups[i].Sources {
-				sourceIDs[j] = s.ID
+			targetID := groups[i].Target.ID
+			if groups[i].NewTarget {
+				id, _, err := store.ResolveOrCreateCanonicalTag(groups[i].Target.Name)
+				if err != nil {
+					groups[i].Error = err.Error()
+					continue
+				}
+				targetID = id
 			}
-			moved, err := store.ApplyTagMerge(groups[i].Target.ID, sourceIDs)
+			sourceIDs := make([]int, 0, len(groups[i].Sources))
+			for _, s := range groups[i].Sources {
+				if s.ID == targetID {
+					continue // 新建目标解析可能命中既有/别名标签而与来源重合
+				}
+				sourceIDs = append(sourceIDs, s.ID)
+			}
+			if len(sourceIDs) == 0 {
+				groups[i].Error = "合并后无有效来源标签"
+				continue
+			}
+			moved, err := store.ApplyTagMerge(targetID, sourceIDs)
 			if err != nil {
 				groups[i].Error = err.Error()
 				continue

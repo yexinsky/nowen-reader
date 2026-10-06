@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/store"
@@ -143,17 +144,37 @@ func (h *TagHandler) ListTagOperations(c *gin.Context) {
 }
 
 // POST /api/tags/normalization/apply — 执行合并
+// targetTagId 与 newTargetName 二选一：newTargetName 用于目标标签尚不存在时
+// （AI 归一新建目标），走归一写入口创建/复用（精确名/同 normKey 命中则不新建）。
 func (h *TagHandler) ApplyTagNormalization(c *gin.Context) {
 	var body struct {
-		TargetTagID  int   `json:"targetTagId"`
-		SourceTagIDs []int `json:"sourceTagIds"`
+		TargetTagID   int    `json:"targetTagId"`
+		NewTargetName string `json:"newTargetName"`
+		SourceTagIDs  []int  `json:"sourceTagIds"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.TargetTagID <= 0 || len(body.SourceTagIDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "targetTagId and sourceTagIds required"})
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.SourceTagIDs) == 0 ||
+		(body.TargetTagID <= 0 && strings.TrimSpace(body.NewTargetName) == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "targetTagId (or newTargetName) and sourceTagIds required"})
 		return
 	}
 
-	comicCount, err := store.ApplyTagMerge(body.TargetTagID, body.SourceTagIDs)
+	targetTagID := body.TargetTagID
+	created := false
+	if strings.TrimSpace(body.NewTargetName) != "" {
+		id, isCreated, err := store.ResolveOrCreateCanonicalTag(body.NewTargetName)
+		if err != nil {
+			if errors.Is(err, store.ErrTagNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Tag not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resolve new target tag"})
+			return
+		}
+		targetTagID = id
+		created = isCreated
+	}
+
+	comicCount, err := store.ApplyTagMerge(targetTagID, body.SourceTagIDs)
 	if err != nil {
 		if errors.Is(err, store.ErrTagNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Tag not found"})
@@ -162,7 +183,7 @@ func (h *TagHandler) ApplyTagNormalization(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to merge tags"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "comicCount": comicCount})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "comicCount": comicCount, "targetTagId": targetTagID, "created": created})
 }
 
 // POST /api/tags/normalization/undo — 撤销合并

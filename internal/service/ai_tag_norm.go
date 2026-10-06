@@ -7,19 +7,25 @@ import (
 )
 
 // ============================================================
-// AI 标签归一：把内容标签清单（名称+用量）分批交给 LLM，
-// 找出「同一概念的不同写法」（译名、罗马音、繁简体、空格/连字符差异等）
-// 并给出归并分组（规范目标 + 待并入变体）。只做建议；
-// 是否落库由调用方严格校验后决定（复用归一工作台的合并逻辑）。
+// AI 标签归一（两段式）：
+//   规范池 = 高用量标签（按用量降序的头部，主流表达所在）；
+//   变体批 = 低用量标签，分批送入，让 AI 把每个变体归入规范池
+//   中的同义标签；池中没有合适目标时允许变体批内互配，
+//   或新建更规范的标签作为目标（结果标 "new": true）。
 //
-// 分批的原因：一次性送入数百标签时，重复组多的大库会输出上百组建议，
-// 极易撞上模型输出上限（如 deepseek-chat 8k）被截断成半截 JSON。
-// 分批后单批输出天然有界；批大小可在 AI 设置调整（tagNormBatchSize）。
-// 代价：跨批的同义对（如「少女」在批1、「SHOUJO」在批2）本次不会被发现，
-// 机械归一预览（normKey 相同的对）不受影响，多跑几轮可逐步收敛。
+// 为什么两段式：合并方向必须「低用量变体 → 高用量主流名」，
+// 若同批混着高低用量标签，AI 缺少参照系会选错方向，且同义对
+// 容易被切进不同批而漏配。规范池每批完整带入，天然解决两者。
+//
+// 只做建议；是否落库由调用方严格校验后决定（复用归一工作台的
+// 合并逻辑，写别名 + 操作日志，可撤销）。
 // ============================================================
 
-// defaultTagNormBatchSize 每批送入 LLM 的标签数缺省值。
+// aiNormPoolSize 规范池大小（按用量降序的头部标签数）；
+// 候选不足时取一半，保证留有变体可归。
+const aiNormPoolSize = 150
+
+// defaultTagNormBatchSize 每批变体数的缺省值。
 // 可通过 AI 设置的 tagNormBatchSize 调整（50-800）。
 const defaultTagNormBatchSize = 250
 
@@ -30,10 +36,12 @@ type TagNormCandidate struct {
 }
 
 // TagMergeSuggestion 一组归并建议：Target 为规范标签，Sources 为待并入变体。
-// 名称均应从候选清单逐字复制。
+// New=true 表示 Target 不在既有清单中、需要新建。
+// 名称（除新建目标外）均应从清单逐字复制。
 type TagMergeSuggestion struct {
 	Target  string   `json:"target"`
 	Sources []string `json:"sources"`
+	New     bool     `json:"new"`
 }
 
 // tagNormBatchMaxTokens 按批大小推算单批输出上限：
@@ -49,13 +57,15 @@ func tagNormBatchMaxTokens(batchSize int) int {
 	return tokens
 }
 
-// SuggestTagMerges 分批调用 LLM，从标签清单中找出同义变体分组并合并结果。
-// 调用方负责严格匹配：返回的名称必须与既有标签名完全相等才采用。
-func SuggestTagMerges(cfg AIConfig, candidates []TagNormCandidate) ([]TagMergeSuggestion, error) {
+// SuggestTagMerges 两段式归一建议：variants 按批送入，每批都携带完整规范池。
+// pool 应为按用量降序的头部标签；variants 为其余候选。
+// 调用方负责严格匹配：返回的既有标签名必须与清单完全相等才采用，
+// 新建目标需经 ResolveOrCreateCanonicalTag 落库。
+func SuggestTagMerges(cfg AIConfig, pool, variants []TagNormCandidate) ([]TagMergeSuggestion, error) {
 	if !cfg.EnableCloudAI || cfg.CloudAPIKey == "" {
 		return nil, fmt.Errorf("cloud AI not configured")
 	}
-	if len(candidates) == 0 {
+	if len(pool) == 0 && len(variants) == 0 {
 		return []TagMergeSuggestion{}, nil
 	}
 
@@ -65,14 +75,17 @@ func SuggestTagMerges(cfg AIConfig, candidates []TagNormCandidate) ([]TagMergeSu
 	}
 	batchMaxTokens := tagNormBatchMaxTokens(batchSize)
 
-	total := (len(candidates) + batchSize - 1) / batchSize
+	if len(variants) == 0 {
+		return []TagMergeSuggestion{}, nil
+	}
+	total := (len(variants) + batchSize - 1) / batchSize
 	var all []TagMergeSuggestion
-	for i, start := 0, 0; start < len(candidates); i, start = i+1, start+batchSize {
+	for i, start := 0, 0; start < len(variants); i, start = i+1, start+batchSize {
 		end := start + batchSize
-		if end > len(candidates) {
-			end = len(candidates)
+		if end > len(variants) {
+			end = len(variants)
 		}
-		batchSuggestions, err := suggestTagMergesBatch(cfg, candidates[start:end], batchMaxTokens)
+		batchSuggestions, err := suggestTagMergesBatch(cfg, pool, variants[start:end], batchMaxTokens)
 		if err != nil {
 			return nil, fmt.Errorf("第 %d/%d 批分析失败: %w", i+1, total, err)
 		}
@@ -81,28 +94,34 @@ func SuggestTagMerges(cfg AIConfig, candidates []TagNormCandidate) ([]TagMergeSu
 	return all, nil
 }
 
-// suggestTagMergesBatch 单次 LLM 调用处理一批标签。
-func suggestTagMergesBatch(cfg AIConfig, candidates []TagNormCandidate, maxTokens int) ([]TagMergeSuggestion, error) {
-	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. You will get content tags with usage counts. Find groups of tags that denote EXACTLY THE SAME concept: different spellings, translations (e.g. English / Japanese / Chinese), romanizations, abbreviations, Traditional/Simplified Chinese variants, extra/missing spaces, hyphens or punctuation.
+// suggestTagMergesBatch 单次 LLM 调用处理一批变体（附带完整规范池）。
+func suggestTagMergesBatch(cfg AIConfig, pool, variants []TagNormCandidate, maxTokens int) ([]TagMergeSuggestion, error) {
+	systemPrompt := `You are a manga/comic/novel library tag taxonomy expert. You get TWO lists:
+1. CANONICAL POOL — high-usage tags users browse most (preferred merge targets)
+2. VARIANTS — low-usage tags, likely redundant spellings/translations of something
+
+Task: for each variant, find a CANONICAL POOL tag denoting EXACTLY THE SAME concept and group them under it. If no pool tag matches, variants in this batch may group among themselves — then pick the most intuitive mainstream name as target. Only when neither the pool nor the batch contains a good intuitive canonical name, you may CREATE a new tag as target and mark it "new": true (e.g. merge "besar" into a new "巨乳").
 
 Rules:
 - Merge ONLY exact synonyms. Tags with related but DIFFERENT meanings (e.g. "少女" vs "萝莉", "swimsuit" vs "bikini") must NOT be merged
-- For each group pick exactly ONE canonical "target" that the others merge into. Pick the name users would most naturally search and browse:
-  1) A plain, intuitive, mainstream term ALWAYS wins — e.g. a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"
-  2) Only when two variants are equally intuitive, the higher usage count wins
-  NEVER pick a target just because it has more comics.
-- Copy tag names VERBATIM from the provided list — never invent, translate or modify names
+- Target priority: the intuitive mainstream name ALWAYS wins — a clear Chinese word like "巨乳" or "少女" beats a transliteration, foreign word, acronym or odd casing like "besar", "SHOUJO", "BBD"; usage count only breaks ties between equally intuitive names; NEVER pick a target just because it has more comics
+- New targets: concise intuitive names (Chinese ≤6 characters); use sparingly — prefer existing pool tags
+- Copy existing tag names VERBATIM from the lists — never invent, translate or modify them; only "new": true targets may be absent from the lists
 - Each tag may appear in at most one group; a tag must never be both target and source
-- Return ONLY a JSON array, no extra text: [{"target":"<canonical>","sources":["<variant>",...]}]
-- If nothing is a duplicate, return []
+- Return ONLY a JSON array, no extra text: [{"target":"<canonical>","sources":["<variant>",...],"new":false}]
+- If nothing merges, return []
 
-Example: tags "巨乳 #340", "besar #520", "SHOUJO #3", "少女 #120" → [{"target":"巨乳","sources":["besar"]},{"target":"少女","sources":["SHOUJO"]}]  (besar has more comics but is NOT the target)`
+Example: pool ["巨乳 #340","少女 #120"], variants ["besar #12","SHOUJO #3","seijin #2"] → [{"target":"巨乳","sources":["besar"]},{"target":"少女","sources":["SHOUJO"]},{"target":"成人","sources":["seijin"],"new":true}]`
 
-	var lines strings.Builder
-	for _, c := range candidates {
-		fmt.Fprintf(&lines, "%s #%d\n", c.Name, c.Count)
+	var poolLines, variantLines strings.Builder
+	for _, c := range pool {
+		fmt.Fprintf(&poolLines, "%s #%d\n", c.Name, c.Count)
 	}
-	userPrompt := fmt.Sprintf("Tags (name #comicCount):\n%s\nGroup exact-synonym tags and return the JSON array.", lines.String())
+	for _, c := range variants {
+		fmt.Fprintf(&variantLines, "%s #%d\n", c.Name, c.Count)
+	}
+	userPrompt := fmt.Sprintf("Canonical pool (high-usage):\n%s\nVariant batch (low-usage):\n%s\nGroup each variant into the pool (or within the batch) and return the JSON array.",
+		poolLines.String(), variantLines.String())
 
 	content, err := CallCloudLLM(cfg, systemPrompt, userPrompt, &LLMCallOptions{
 		Scenario:         "norm_tags",
