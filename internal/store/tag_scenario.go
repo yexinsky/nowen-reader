@@ -309,9 +309,14 @@ type TagScenarioState struct {
 	ScenarioID int // 0 = 未分配
 }
 
-// ListTagsWithScenarioState 返回全部标签及当前情景分配，按 name ASC。
+// ListTagsWithScenarioState 返回参与情景分类的标签及当前分配，按 name ASC。
+// 与 ListTagScenariosWithTags 一致：作者标签（kind='author'）不参与情景分类。
 func ListTagsWithScenarioState() ([]TagScenarioState, error) {
-	rows, err := db.Query(`SELECT "id", "name", COALESCE("scenarioId", 0) FROM "Tag" ORDER BY "name" ASC`)
+	rows, err := db.Query(`
+		SELECT "id", "name", COALESCE("scenarioId", 0)
+		FROM "Tag"
+		WHERE COALESCE("kind", 'tag') = 'tag'
+		ORDER BY "name" ASC`)
 	if err != nil {
 		return nil, err
 	}

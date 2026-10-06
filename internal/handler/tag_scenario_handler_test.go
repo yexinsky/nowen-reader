@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -227,6 +228,10 @@ func TestAIAssignTagScenariosStrictMatching(t *testing.T) {
 	if err := store.AddTagsToComic("ts-ai-1", []string{"汉化", "巨乳", "BBD"}); err != nil {
 		t.Fatalf("AddTagsToComic failed: %v", err)
 	}
+	// 作者标签（kind='author'）不参与情景分类，不应进入 AI 清单
+	if err := store.AddAuthorTagToComic("ts-ai-1", "山本ティナ"); err != nil {
+		t.Fatalf("AddAuthorTagToComic failed: %v", err)
+	}
 	hanhuaID := 0
 	if err := store.DB().QueryRow(`SELECT "id" FROM "Tag" WHERE "name" = '汉化'`).Scan(&hanhuaID); err != nil {
 		t.Fatalf("tag 汉化 missing: %v", err)
@@ -238,10 +243,14 @@ func TestAIAssignTagScenariosStrictMatching(t *testing.T) {
 	// - BBD→空情景（AI 跳过 → skipped）
 	// - 未知标签名（忽略）
 	aiReply := `[{"tag":"汉化","scenario":"工具"},{"tag":"巨乳","scenario":"不存在情景"},{"tag":"BBD","scenario":""},{"tag":"未知标签","scenario":"工具"}]`
+	var sentPrompt string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if !strings.HasSuffix(req.URL.Path, "/chat/completions") {
 			w.WriteHeader(http.StatusNotFound)
 			return
+		}
+		if body, err := io.ReadAll(req.Body); err == nil {
+			sentPrompt = string(body) // 原始 JSON body，含 user prompt
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + strings.ReplaceAll(aiReply, `"`, `\"`) + `"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
@@ -278,9 +287,20 @@ func TestAIAssignTagScenariosStrictMatching(t *testing.T) {
 		t.Fatalf("unexpected assignment: %#v", a)
 	}
 
-	// skipped：未写入的标签按输入顺序（name ASC）返回
+	// skipped：未写入的标签按输入顺序（name ASC）返回；作者标签不在其中
 	if len(resp.Skipped) != 2 || resp.Skipped[0] != "BBD" || resp.Skipped[1] != "巨乳" {
 		t.Fatalf("skipped = %#v, want [BBD 巨乳]", resp.Skipped)
+	}
+
+	// 发给 AI 的提示词只含内容标签
+	if sentPrompt == "" {
+		t.Fatalf("AI request body not captured")
+	}
+	if !strings.Contains(sentPrompt, "汉化") {
+		t.Fatalf("prompt missing content tag 汉化: %s", sentPrompt)
+	}
+	if strings.Contains(sentPrompt, "山本ティナ") {
+		t.Fatalf("author tag leaked into AI prompt: %s", sentPrompt)
 	}
 
 	// 写库验证：汉化挂到工具，其余保持未分配

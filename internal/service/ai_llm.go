@@ -129,7 +129,7 @@ func callLocalLLM(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCallOp
 	}
 
 	start := time.Now()
-	result, usage, err := callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images, false)
+	result, usage, err := callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images, opts.StrictTruncation)
 	duration := time.Since(start).Milliseconds()
 
 	// 记录使用量

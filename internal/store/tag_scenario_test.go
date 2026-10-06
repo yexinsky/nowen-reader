@@ -315,3 +315,43 @@ func TestTagScenarioListOrderingAndCounts(t *testing.T) {
 		t.Fatalf("unassigned = %#v, want [巨乳 comicCount=2]", unassigned)
 	}
 }
+
+// ListTagsWithScenarioState 供 AI 分配读取候选：作者标签不参与情景分类，
+// 与 ListTagScenariosWithTags（界面展示）保持一致。
+func TestListTagsWithScenarioStateExcludesAuthorTags(t *testing.T) {
+	setupTestDB(t)
+
+	if err := BulkCreateComics([]struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"ts-kind-1", "tskind1.cbz", "TS Kind 1", 1000},
+	}); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+	if err := AddTagsToComic("ts-kind-1", []string{"巨乳"}); err != nil {
+		t.Fatalf("AddTagsToComic failed: %v", err)
+	}
+	if err := AddAuthorTagToComic("ts-kind-1", "山本ティナ"); err != nil {
+		t.Fatalf("AddAuthorTagToComic failed: %v", err)
+	}
+
+	states, err := ListTagsWithScenarioState()
+	if err != nil {
+		t.Fatalf("ListTagsWithScenarioState failed: %v", err)
+	}
+	if len(states) != 1 || states[0].Name != "巨乳" || states[0].ScenarioID != 0 {
+		t.Fatalf("states = %#v, want only content tag 巨乳", states)
+	}
+
+	// 全量清点：库内确有作者标签，只是不参与情景
+	var authorCount int
+	if err := DB().QueryRow(`SELECT COUNT(*) FROM "Tag" WHERE "kind" = 'author'`).Scan(&authorCount); err != nil {
+		t.Fatalf("count author tags failed: %v", err)
+	}
+	if authorCount != 1 {
+		t.Fatalf("author tag count = %d, want 1 (fixture sanity)", authorCount)
+	}
+}

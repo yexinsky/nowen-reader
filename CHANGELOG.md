@@ -1,6 +1,14 @@
 # Changelog
 
 ## Unreleased
+### Fixed (fix/ai-tag-scenario AI 情景分配请求失败——分批+严格截断检测+作者标签过滤)
+
+- 根因一(500 截断):`/api/ai/assign-tag-scenarios` 把全部候选标签一次性送给 AI 且 `max_tokens` 硬编码 2000——输出按标签数线性增长(实测约 23 token/条),上千标签必然被截成半截 JSON,解析失败即 500。改为分批调用(每批 250,情景清单每批完整携带),单批输出预算按 28 token/条推算(250→7000),并开启 `finish_reason=length` 严格检测:截断时报明确原因而非难懂的解析错误
+- 根因二(作者标签混入):界面「未分配」不含作者标签,AI 却收到全部 1292 个(其中 1082 个 `kind='author'` 画师名,实测被硬塞进「影片属性-全彩/3D等」)。`ListTagsWithScenarioState` 增加 kind 过滤,与 `ListTagScenariosWithTags` 口径一致
+- 提示词:加入成人域框定(与归一/映射一致);不适合的标签直接省略输出(不再回 `"scenario":""` 占位);标签名/情景名逐字复制
+- 顺带:本地模型通道 `StrictTruncation` 原写死 false(llama.cpp 截断无提示),改为按调用选项透传
+- 测试:service 分批/单批/截断报错/批失败序号、store 作者标签过滤、handler 端到端(断言作者名不得出现在发给 AI 的提示词);真实数据端到端 210 内容标签 12s 分配 209 个、作者 0 误分配
+
 ### Fixed (fix/jm-session-durable JM 会话有效期与过期感知)
 
 - JM 会话有效期改为 **7 天滑动续期**:鉴权命中且距上次续期超过 24h 自动续满 7 天,活跃用户不再「没到 7 天就过期」;真正的过期条件是连续 7 天不活跃
