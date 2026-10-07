@@ -16,6 +16,7 @@ import { apiPath } from "@/lib/base-path";
 import { useTranslation } from "@/lib/i18n";
 import { useToast } from "@/components/Toast";
 import { SearchableSelect } from "@/components/SearchableSelect";
+import { NumberField } from "@/components/NumberField";
 import { tagNormKey } from "@/lib/tagNorm";
 
 // ── Types (frozen contract: /api/tags/normalization/*, /api/tags/aliases) ──
@@ -879,12 +880,12 @@ export function TagNormalizationPanel({
                   {n?.vocabAddSuccess}
                 </button>
                 <span className="ml-auto flex items-center gap-1.5">
-                  <input
-                    type="number"
+                  <NumberField
+                    value={vocabTopN}
                     min={10}
                     max={200}
-                    value={vocabTopN}
-                    onChange={(e) => setVocabTopN(Math.max(10, Math.min(200, parseInt(e.target.value) || 60)))}
+                    fallback={60}
+                    onCommit={setVocabTopN}
                     className="h-7 w-16 rounded-lg border border-border/50 bg-background px-2 text-xs text-foreground outline-none focus:border-accent/50"
                   />
                   <button

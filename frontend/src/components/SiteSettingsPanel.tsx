@@ -20,6 +20,7 @@ import {
 import { useTranslation } from "@/lib/i18n";
 import { invalidateSiteSettings } from "@/hooks/useSiteSettings";
 import { apiPath } from "@/lib/base-path";
+import { NumberField } from "@/components/NumberField";
 
 interface SiteConfig {
   siteName: string;
@@ -277,8 +278,8 @@ export function SiteSettingsPanel() {
           <h3 className="text-sm font-semibold text-foreground">媒体处理默认值</h3>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="text-sm text-foreground">缩略图宽度<input type="number" min={100} max={1200} value={config.thumbnailWidth} onChange={(event) => update("thumbnailWidth", Number(event.target.value) || 400)} className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" /></label>
-          <label className="text-sm text-foreground">缩略图高度<input type="number" min={100} max={1600} value={config.thumbnailHeight} onChange={(event) => update("thumbnailHeight", Number(event.target.value) || 560)} className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" /></label>
+          <label className="text-sm text-foreground">缩略图宽度<NumberField value={config.thumbnailWidth} min={100} max={1200} fallback={400} onCommit={(v) => update("thumbnailWidth", v)} className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" /></label>
+          <label className="text-sm text-foreground">缩略图高度<NumberField value={config.thumbnailHeight} min={100} max={1600} fallback={560} onCommit={(v) => update("thumbnailHeight", v)} className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" /></label>
         </div>
         <p className="mt-3 text-xs text-muted">修改尺寸后，可前往“数据管理”重新生成缩略图。</p>
       </section>

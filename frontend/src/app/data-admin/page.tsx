@@ -27,6 +27,7 @@ import {
   type StorageThreshold,
 } from "@/api/admin";
 import { PageContent, PageHeader } from "@/components/PageHeader";
+import { NumberField } from "@/components/NumberField";
 import ThumbnailMaintenancePanel from "@/components/ThumbnailMaintenancePanel";
 import TagSnapshotPanel from "@/components/TagSnapshotPanel";
 
@@ -423,22 +424,20 @@ export default function DataAdminPage() {
             <div className="flex flex-wrap items-center gap-3 text-xs">
               <label className="flex items-center gap-1.5">
                 <span className="text-muted">早于</span>
-                <input
-                  type="number"
-                  min={0}
+                <NumberField
                   value={olderThanDays}
-                  onChange={(e) => setOlderThanDays(parseInt(e.target.value || "0", 10))}
+                  fallback={0}
+                  onCommit={setOlderThanDays}
                   className="w-16 rounded border border-border bg-background px-2 py-1 text-right tabular-nums"
                 />
                 <span className="text-muted">天</span>
               </label>
               <label className="flex items-center gap-1.5">
                 <span className="text-muted">大于</span>
-                <input
-                  type="number"
-                  min={0}
+                <NumberField
                   value={largerThanMB}
-                  onChange={(e) => setLargerThanMB(parseInt(e.target.value || "0", 10))}
+                  fallback={0}
+                  onCommit={setLargerThanMB}
                   className="w-16 rounded border border-border bg-background px-2 py-1 text-right tabular-nums"
                 />
                 <span className="text-muted">MB</span>
@@ -640,11 +639,10 @@ function ThresholdField({
   return (
     <label className="block text-sm">
       <div className="mb-1 text-xs text-muted">{label}</div>
-      <input
-        type="number"
-        min={0}
+      <NumberField
         value={value}
-        onChange={(e) => onChange(parseInt(e.target.value || "0", 10))}
+        fallback={0}
+        onCommit={onChange}
         className="w-full rounded border border-border bg-background px-3 py-1.5 tabular-nums focus:border-emerald-500/60 focus:outline-none"
       />
       {hint ? <div className="mt-1 text-[11px] text-muted">{hint}</div> : null}
