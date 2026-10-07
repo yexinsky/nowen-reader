@@ -524,6 +524,9 @@ function DetailBody({
     isNSFW({ tags: detail.tags, title: detail.title }) && privacyEnabled && blurNSFW;
   const coverUrl = resolveJmUrl(detail.coverUrl);
   const descLong = detail.description.length > 80;
+  // 上游形态兜底:契约 authors 恒为数组(缺失 → []),但旧版后端/上游漂移可能给 null,
+  // 直接 .length 会让整页崩溃(回归案例:aid=89527)
+  const authors = detail.authors ?? [];
 
   const rawEpisodes = detail.episodes;
   // 章节排序:服务端 order 兜底排序,支持正序/倒序
@@ -574,10 +577,10 @@ function DetailBody({
               {detail.author || "未知作者"}
             </p>
             {/* 作者标签(可点):与普通标签区分(圆角 + 👤 + 紫色系);点击选中后与标签共用操作条 */}
-            {detail.authors.length > 0 && (
+            {authors.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span className="text-xs text-muted">作者:</span>
-                {detail.authors.map((author) => {
+                {authors.map((author) => {
                   const selected = selectedItems.some(
                     (it) => it.type === "author" && it.value === author
                   );

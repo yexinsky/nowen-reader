@@ -267,9 +267,17 @@ func TestMapAlbumDetailDefaultEpisodeAndNotFound(t *testing.T) {
 	if d["updateAt"] != "2024-01-02" {
 		t.Errorf("update_at 缺失应回退 addtime: %#v", d["updateAt"])
 	}
-	// author 缺失 → default_author
+	// author 缺失 → default_author;authors 恒为非 nil 数组(缺失 → [],
+	// nil slice 会序列化成 JSON null,前端契约要求缺失 → [],回归防:aid=89527)
 	if d["author"] != "default_author" {
 		t.Errorf("author 缺失回退: %#v", d["author"])
+	}
+	authors, ok := d["authors"].([]string)
+	if !ok || authors == nil {
+		t.Fatalf("authors 应为非 nil []string(JSON 序列化为 [] 而非 null): %#v", d["authors"])
+	}
+	if len(authors) != 0 {
+		t.Errorf("author 缺失 authors 应为空数组: %#v", authors)
 	}
 	// author 为字符串形态
 	raw2 := contentFixtureJSON(t, map[string]any{"id": "124", "name": "x", "author": " solo "})
@@ -412,6 +420,10 @@ func TestAlbumAuthors(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := albumAuthors(c.raw)
+		// 恒为非 nil:JSON 契约要求缺失 → [],nil slice 会序列化成 null
+		if got == nil {
+			t.Fatalf("%s: 不应返回 nil slice: %v", c.name, got)
+		}
 		if len(got) != len(c.want) {
 			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
 		}

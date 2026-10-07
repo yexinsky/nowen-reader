@@ -263,10 +263,11 @@ func mapAlbumDetail(data []byte, aid string) (any, error) {
 }
 
 // albumAuthors 上游 author 字段(string 或数组)→ 归一作者名数组:trim、剔空、
-// 按序去重;上游缺失/为空 → 空数组(前端回退纯文本展示)。作者标签与作者搜索
-// (searchType=author)使用;探针口径:aid=1475046 实测上游 author=["N/A"](数组)。
+// 按序去重;上游缺失/为空 → 空数组(非 nil——nil 会序列化成 JSON null,前端
+// 契约要求恒为数组,缺失 → [])。作者标签与作者搜索(searchType=author)使用;
+// 探针口径:aid=1475046 实测上游 author=["N/A"](数组)。
 func albumAuthors(v any) []string {
-	var out []string
+	out := make([]string, 0)
 	seen := map[string]struct{}{}
 	switch t := v.(type) {
 	case string:
