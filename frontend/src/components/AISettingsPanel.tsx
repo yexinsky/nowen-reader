@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { useAIStatus } from "@/hooks/useAIStatus";
+import { NumberField } from "@/components/NumberField";
 
 type CloudProvider =
   | "openai"
@@ -666,13 +667,12 @@ export function AISettingsPanel() {
                     <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
                       {aiT.maxTokens || "Max Output Tokens"}
                     </span>
-                    <input
-                      type="number"
+                    <NumberField
+                      value={config.maxTokens}
                       min={100}
                       max={1000000}
-                      step={100}
-                      value={config.maxTokens}
-                      onChange={(e) => setConfig({ ...config, maxTokens: Math.max(100, Math.min(1000000, parseInt(e.target.value) || 2000)) })}
+                      fallback={2000}
+                      onCommit={(v) => setConfig({ ...config, maxTokens: v })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
@@ -685,12 +685,12 @@ export function AISettingsPanel() {
                     <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
                       {aiT.maxRetries || "Retry Count"}
                     </span>
-                    <input
-                      type="number"
+                    <NumberField
+                      value={config.maxRetries}
                       min={0}
                       max={5}
-                      value={config.maxRetries}
-                      onChange={(e) => setConfig({ ...config, maxRetries: Math.max(0, Math.min(5, parseInt(e.target.value) || 0)) })}
+                      fallback={0}
+                      onCommit={(v) => setConfig({ ...config, maxRetries: v })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
@@ -703,13 +703,12 @@ export function AISettingsPanel() {
                     <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
                       {aiT.tagNormBatchSize || "Tag Norm Batch Size"}
                     </span>
-                    <input
-                      type="number"
+                    <NumberField
+                      value={config.tagNormBatchSize}
                       min={50}
                       max={800}
-                      step={50}
-                      value={config.tagNormBatchSize}
-                      onChange={(e) => setConfig({ ...config, tagNormBatchSize: Math.max(50, Math.min(800, parseInt(e.target.value) || 250)) })}
+                      fallback={250}
+                      onCommit={(v) => setConfig({ ...config, tagNormBatchSize: v })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
@@ -858,12 +857,12 @@ export function AISettingsPanel() {
                     <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
                       {aiT.localPort || "Port"}
                     </span>
-                    <input
-                      type="number"
+                    <NumberField
+                      value={config.localPort}
                       min={1024}
                       max={65535}
-                      value={config.localPort}
-                      onChange={(e) => setConfig({ ...config, localPort: parseInt(e.target.value) || 11435 })}
+                      fallback={11435}
+                      onCommit={(v) => setConfig({ ...config, localPort: v })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
@@ -873,13 +872,12 @@ export function AISettingsPanel() {
                     <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
                       {aiT.contextSize || "Context Size"}
                     </span>
-                    <input
-                      type="number"
+                    <NumberField
+                      value={config.contextSize}
                       min={1024}
                       max={131072}
-                      step={1024}
-                      value={config.contextSize}
-                      onChange={(e) => setConfig({ ...config, contextSize: parseInt(e.target.value) || 8192 })}
+                      fallback={8192}
+                      onCommit={(v) => setConfig({ ...config, contextSize: v })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
@@ -889,12 +887,10 @@ export function AISettingsPanel() {
                     <span className="block text-xs text-muted sm:w-28 sm:shrink-0">
                       {aiT.threads || "CPU Threads"}
                     </span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={64}
+                    <NumberField
                       value={config.threads}
-                      onChange={(e) => setConfig({ ...config, threads: parseInt(e.target.value) || 0 })}
+                      fallback={0}
+                      onCommit={(v) => setConfig({ ...config, threads: v })}
                       placeholder="0 = auto"
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted/50"
                     />
