@@ -6,7 +6,10 @@ package jm
 // - mapUpstreamBusinessError:上游 401/未登录文案 → 1002,验证码 → 1003,其余 → 2001。
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 )
@@ -108,5 +111,55 @@ func TestMapUpstreamBusinessError(t *testing.T) {
 	err = cl.mapUpstreamBusinessError(500, "服务维护中", []byte(`{"code":500}`)).(*APIError)
 	if err.Code != CodeUpstream || err.Msg != "服务维护中" {
 		t.Fatalf("业务错误应映射 2001: %#v", err)
+	}
+}
+
+// ── readHTTPBody:上游 JSON 响应开头的 UTF-8 BOM 必须剥离(2026-10 上游实测,
+// /setting、/login 响应均带 BOM;Python json.loads 自动剥离,Go 不会) ──
+
+func TestReadHTTPBodyStripsBOM(t *testing.T) {
+	build := func(t *testing.T, payload []byte, gzipIt bool) *http.Response {
+		t.Helper()
+		var r io.Reader = bytes.NewReader(payload)
+		if gzipIt {
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			if _, err := gz.Write(payload); err != nil {
+				t.Fatalf("gzip write: %v", err)
+			}
+			gz.Close()
+			r = &buf
+		}
+		return &http.Response{
+			Body:   io.NopCloser(r),
+			Header: http.Header{},
+		}
+	}
+
+	cases := []struct {
+		name string
+		body []byte
+		gz   bool
+	}{
+		{"BOM+JSON", append([]byte{0xEF, 0xBB, 0xBF}, []byte(`{"code":200,"data":[]}`)...), false},
+		{"BOM+gzip JSON", append([]byte{0xEF, 0xBB, 0xBF}, []byte(`{"code":200,"data":[]}`)...), true},
+		{"plain JSON", []byte(`{"code":200,"data":[]}`), false},
+	}
+	for _, c := range cases {
+		resp := build(t, c.body, c.gz)
+		if c.gz {
+			resp.Header.Set("Content-Encoding", "gzip")
+		}
+		raw, err := readHTTPBody(resp)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		var env apiEnvelope
+		if err := json.Unmarshal(raw, &env); err != nil {
+			t.Fatalf("%s: 剥 BOM 后仍解析失败: %v (raw=%q)", c.name, err, raw)
+		}
+		if env.Code != 200 {
+			t.Fatalf("%s: code = %d, want 200", c.name, env.Code)
+		}
 	}
 }

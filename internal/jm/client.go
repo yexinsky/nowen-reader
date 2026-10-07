@@ -1,6 +1,7 @@
 package jm
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -331,7 +332,11 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// readHTTPBody 读取响应体并按 Content-Encoding 显式解压。
+// utf8BOM 上游 JSON 响应开头的 UTF-8 BOM(实测 /setting、/login 均带;
+// Python json.loads(bytes) 自动剥离,Go json.Unmarshal 则报错,必须显式去除)。
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// readHTTPBody 读取响应体并按 Content-Encoding 显式解压,再去掉开头 UTF-8 BOM。
 // 请求头手动声明了 Accept-Encoding: gzip(SDK APP_HEADERS_TEMPLATE),
 // 此时 net/http 不自动解压,必须显式处理(/login、通用 API 请求共用)。
 func readHTTPBody(resp *http.Response) ([]byte, error) {
@@ -344,5 +349,9 @@ func readHTTPBody(resp *http.Response) ([]byte, error) {
 		defer gz.Close()
 		body = gz
 	}
-	return io.ReadAll(body)
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.TrimPrefix(data, utf8BOM), nil
 }
