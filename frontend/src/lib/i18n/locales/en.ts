@@ -85,8 +85,6 @@ const en: Translations = {
   // Tag Filter
   tagFilter: {
     label: "Tags",
-    translate: "Translate",
-    translating: "Translating...",
     empty: "No tags yet. Add tags in the Tags & Categories management page.",
     searchPlaceholder: "Search tags…",
     clearSearch: "Clear search",

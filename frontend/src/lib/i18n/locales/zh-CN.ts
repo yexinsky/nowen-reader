@@ -81,8 +81,6 @@ const zhCN = {
   // Tag Filter
   tagFilter: {
     label: "标签筛选",
-    translate: "翻译标签",
-    translating: "翻译中...",
     empty: "暂无标签，可在标签与分类管理页面添加",
     searchPlaceholder: "搜索标签…",
     clearSearch: "清空搜索",
@@ -1536,8 +1534,6 @@ export interface Translations {
   };
   tagFilter: {
     label: string;
-    translate: string;
-    translating: string;
     empty: string;
     searchPlaceholder: string;
     clearSearch: string;

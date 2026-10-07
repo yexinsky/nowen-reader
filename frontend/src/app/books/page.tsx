@@ -41,6 +41,9 @@ import { seriesIdFromShelfId } from "@/lib/series-id";
 
 const DEFAULT_PAGE_SIZE = 24;
 
+// 排序存储键版本号：v2 默认排序改为「添加时间倒序」，作废 v1 旧键，避免历史会话残留的 title/asc 覆盖新默认
+const SORT_STORAGE_VERSION = "v2";
+
 /** Debounce hook: delays value updates to avoid rapid-fire API calls */
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -221,15 +224,15 @@ export default function BooksPage() {
   });
   const [sortBy, setSortBy] = useState<string>(() => {
     if (typeof window !== "undefined") {
-      return sessionStorage.getItem("homeFilter:sortBy") || "title";
+      return sessionStorage.getItem(`homeFilter:sortBy:${SORT_STORAGE_VERSION}`) || "addedAt";
     }
-    return "title";
+    return "addedAt";
   });
   const [sortOrder, setSortOrder] = useState<string>(() => {
     if (typeof window !== "undefined") {
-      return sessionStorage.getItem("homeFilter:sortOrder") || "asc";
+      return sessionStorage.getItem(`homeFilter:sortOrder:${SORT_STORAGE_VERSION}`) || "desc";
     }
-    return "asc";
+    return "desc";
   });
   const [selectedCategory, setSelectedCategory] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
@@ -299,10 +302,10 @@ export default function BooksPage() {
     sessionStorage.setItem("homeFilter:favorites", String(favoritesOnly));
   }, [favoritesOnly]);
   useEffect(() => {
-    sessionStorage.setItem("homeFilter:sortBy", sortBy);
+    sessionStorage.setItem(`homeFilter:sortBy:${SORT_STORAGE_VERSION}`, sortBy);
   }, [sortBy]);
   useEffect(() => {
-    sessionStorage.setItem("homeFilter:sortOrder", sortOrder);
+    sessionStorage.setItem(`homeFilter:sortOrder:${SORT_STORAGE_VERSION}`, sortOrder);
   }, [sortOrder]);
   useEffect(() => {
     sessionStorage.setItem("homeFilter:category", selectedCategory || "");
@@ -928,7 +931,7 @@ export default function BooksPage() {
       />
 
       {/* Main Content */}
-      <div className={`mx-auto w-full max-w-[1760px] px-6 sm:px-8 lg:px-10 2xl:px-14 pt-14 sm:pt-16 xl:grid xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6 ${batchMode ? "pb-32" : "pb-20 sm:pb-12"}`}>
+      <div className={`mx-auto w-full max-w-[1760px] px-6 sm:px-8 lg:px-10 2xl:px-14 pt-14 sm:pt-16 ${batchMode ? "pb-32" : "pb-20 sm:pb-12"}`}>
       <main className="min-w-0 space-y-4 pt-6 sm:pt-8">
         {/* Data Source Indicator — 空库提示 */}
         {!loading && displayComics.length === 0 && apiTotal === 0 && !debouncedSearch && selectedTags.length === 0 && !favoritesOnly && !selectedCategory && selectedLibraryIds.length === 0 && (
@@ -1199,12 +1202,6 @@ export default function BooksPage() {
                 selectedTags={selectedTags}
                 onTagToggle={handleTagToggle}
                 onClearAll={() => setSelectedTags([])}
-                onTagsTranslated={() => {
-                  refetch();
-                  // Refresh global tags after translation
-                  fetchTags();
-                  fetchScenarios();
-                }}
               />
             </div>
 

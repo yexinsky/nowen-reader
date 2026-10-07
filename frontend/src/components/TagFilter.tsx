@@ -1,9 +1,8 @@
 ﻿"use client";
 
-import { apiPath } from "@/lib/base-path";
-import { useState, useCallback, useMemo, useRef } from "react";
-import { Tag, ChevronRight, Languages, Search, X } from "lucide-react";
-import { useTranslation, useLocale } from "@/lib/i18n";
+import { useState, useMemo, useRef } from "react";
+import { Tag, ChevronRight, Search, X } from "lucide-react";
+import { useTranslation } from "@/lib/i18n";
 import { tagMatchesQuery } from "@/lib/tagNorm";
 import type { TagScenarioGroup } from "@/api/tags";
 
@@ -14,7 +13,6 @@ interface TagFilterProps {
   selectedTags: string[];
   onTagToggle: (tag: string) => void;
   onClearAll: () => void;
-  onTagsTranslated?: () => void;
   /** 可选：按情景分组渲染（仅大面板展开模式生效；缺省/为空时行为与现状完全一致） */
   scenarios?: TagScenarioGroup[];
 }
@@ -57,12 +55,9 @@ export default function TagFilter({
   selectedTags,
   onTagToggle,
   onClearAll,
-  onTagsTranslated,
   scenarios,
 }: TagFilterProps) {
   const t = useTranslation();
-  const { locale } = useLocale();
-  const [translating, setTranslating] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -76,33 +71,6 @@ export default function TagFilter({
       return !prev;
     });
   };
-
-  const handleTranslate = useCallback(async () => {
-    if (translating) return;
-    setTranslating(true);
-    try {
-      const res = await fetch(apiPath("/api/tags/translate"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetLang: locale }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          // renamed > 0 表示有标签被实际重命名，需要清除选中状态（因为旧标签名已不存在）
-          if (data.renamed > 0) {
-            onClearAll();
-          }
-          // 无论是否有实际重命名，都刷新标签列表以确保显示最新数据
-          onTagsTranslated?.();
-        }
-      }
-    } catch {
-      // ignore
-    } finally {
-      setTranslating(false);
-    }
-  }, [translating, locale, onClearAll, onTagsTranslated]);
 
   // 面板内的标签列表：已选置顶 + 按关键词过滤（繁简互通）+ 渲染数量上限
   const { restTags, hiddenCount } = useMemo(() => {
@@ -180,23 +148,12 @@ export default function TagFilter({
   return (
     <div className="relative">
       <div className={`flex gap-2 flex-col sm:flex-row ${expanded ? "sm:items-start" : "sm:items-center"}`}>
-        {/* Label + Translate + Fold Toggle */}
+        {/* Label + Fold Toggle */}
         <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
           <div className="flex items-center gap-1.5 text-muted">
             <Tag className="h-3.5 w-3.5" />
             <span className="text-xs font-medium whitespace-nowrap">{t.tagFilter.label}</span>
           </div>
-          {allTags.length > 0 && (
-            <button
-              onClick={handleTranslate}
-              disabled={translating}
-              className="flex h-6 items-center gap-1 rounded-md border border-border/40 bg-card/50 px-1.5 text-[10px] font-medium text-muted transition-all hover:text-foreground hover:border-border disabled:opacity-50 disabled:pointer-events-none"
-              title={t.tagFilter.translate}
-            >
-              <Languages className="h-3 w-3" />
-              <span>{translating ? t.tagFilter.translating : t.tagFilter.translate}</span>
-            </button>
-          )}
           {/* 折叠/展开切换 */}
           {allTags.length > FOLD_THRESHOLD && (
             <button
