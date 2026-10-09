@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +96,13 @@ func (rl *rateLimiter) cleanup() {
 	}
 }
 
+// reset 清除某个键的计数（例如登录成功后清零该账号的失败次数）。
+func (rl *rateLimiter) reset(key string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	delete(rl.visitors, key)
+}
+
 // getClientIP extracts the client IP for rate limiting.
 func getClientIP(c *gin.Context) string {
 	ip := c.ClientIP()
@@ -151,4 +159,46 @@ func RateLimitAuth() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// RateLimitLogin 对登录接口按来源 IP 限流，用于挡住 bcrypt 带来的 CPU 放大。
+// 账号维度的防爆破不在这里做，而是由 handler 在「口令校验失败」后调用
+// RecordLoginFailure 计数：这样正确口令永远不会被限流挡下（否则攻击者用
+// 错误口令持续请求就能把唯一管理员锁在门外），也不会因中间件与 handler 的
+// body 解析语义不一致（超长/带尾随字节的 JSON）而被静默绕过。
+func RateLimitLogin() gin.HandlerFunc {
+	ipLimiter := newRateLimiter(10, time.Minute, 20)
+
+	return func(c *gin.Context) {
+		if !ipLimiter.allow(getClientIP(c)) {
+			abortLoginLimited(c)
+			return
+		}
+		c.Next()
+	}
+}
+
+func abortLoginLimited(c *gin.Context) {
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+		"error": "Too many login attempts. Please wait a moment.",
+	})
+}
+
+// loginFailureLimiter 按账号统计失败次数，与来源 IP 无关，
+// 因此换 IP / 用代理池都无法重置：每个账号每分钟最多 10 次口令尝试。
+var loginFailureLimiter = newRateLimiter(10, time.Minute, 10)
+
+func loginAccountKey(username string) string {
+	return "acct:" + strings.ToLower(strings.TrimSpace(username))
+}
+
+// RecordLoginFailure 记录一次口令校验失败；返回 false 表示该账号在窗口内的
+// 失败额度已用尽，调用方应返回 429 而不是 401。
+func RecordLoginFailure(username string) bool {
+	return loginFailureLimiter.allow(loginAccountKey(username))
+}
+
+// ResetLoginFailures 在登录成功后清零该账号的失败计数。
+func ResetLoginFailures(username string) {
+	loginFailureLimiter.reset(loginAccountKey(username))
 }

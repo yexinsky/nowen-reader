@@ -300,3 +300,29 @@ func ClearSessionCookie(c *gin.Context) {
 		c.SetCookie(SessionCookie, "", -1, "/", "", false, true)
 	}
 }
+
+// ResolveSessionUserReadOnly 在未挂 AuthRequired 的公开路由上解析会话 Cookie，
+// 供需要区分「游客 / 已登录」的 handler 使用（如公开的站点设置读取）。
+//
+// 与 getCurrentSessionUser 的区别是不做任何写操作：公开且无限流的路由不应该
+// 因为一个匿名可达的请求就去续期会话或删除过期会话行。
+// 显式 Authorization 头一律返回 nil，不接受 API Key 冒充浏览器会话。
+func ResolveSessionUserReadOnly(c *gin.Context) *model.AuthUser {
+	if c.GetHeader("Authorization") != "" {
+		return nil
+	}
+
+	token, err := c.Cookie(SessionCookie)
+	if err != nil || token == "" {
+		return nil
+	}
+
+	session, user, err := store.GetSessionWithUser(token)
+	if err != nil || session == nil || user == nil {
+		return nil
+	}
+	if session.ExpiresAt.Before(time.Now()) {
+		return nil
+	}
+	return authUserFromModel(user)
+}

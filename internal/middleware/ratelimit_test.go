@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,4 +124,39 @@ func TestRateLimitStrictMiddleware(t *testing.T) {
 	if mw == nil {
 		t.Error("RateLimitStrict returned nil")
 	}
+}
+
+// 登录失败计数按账号统计、与来源 IP 无关：换 IP 无法重置，
+// 且只统计失败——正确口令不会被这个额度挡住（否则攻击者可以用错误口令
+// 持续请求，把唯一管理员锁在门外）。
+func TestLoginFailureLimiterPerAccount(t *testing.T) {
+	const username = "account-under-test"
+	ResetLoginFailures(username)
+	t.Cleanup(func() { ResetLoginFailures(username) })
+
+	for i := 0; i < 10; i++ {
+		if !RecordLoginFailure(username) {
+			t.Fatalf("failure %d should be within quota", i+1)
+		}
+	}
+	if RecordLoginFailure(username) {
+		t.Error("11th failure should exceed the per-account quota")
+	}
+
+	// 大小写变体共享同一配额，攻击者不能靠变体稀释
+	if RecordLoginFailure(strings.ToUpper(username)) {
+		t.Error("quota should be shared across username case variants")
+	}
+
+	// 其他账号各有独立配额
+	if !RecordLoginFailure("another-account-under-test") {
+		t.Error("different account should have its own quota")
+	}
+
+	// 登录成功清零后立即恢复
+	ResetLoginFailures(username)
+	if !RecordLoginFailure(username) {
+		t.Error("quota should be restored after a successful login resets it")
+	}
+	ResetLoginFailures(strings.ToUpper(username))
 }

@@ -296,6 +296,7 @@ func (h *ImageHandler) GetChapterContentConfigured(c *gin.Context) {
 		h.GetChapterContent(c)
 		return
 	}
+	authedJSONNoStore(c)
 	c.JSON(http.StatusOK, gin.H{
 		"content":  chapter.Content,
 		"title":    chapter.Title,

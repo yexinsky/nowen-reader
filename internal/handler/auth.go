@@ -22,6 +22,14 @@ func NewAuthHandler() *AuthHandler {
 	return &AuthHandler{}
 }
 
+// 与存储口令同成本(10)的哑哈希：用户不存在时也消耗一次 bcrypt，
+// 消除「用户名是否存在」的时序差，并抹平 CPU 放大点。
+// 成本值必须与注册时使用的成本一致（见本文件 Register 中的 bcrypt 调用）。
+var dummyPasswordHash = func() []byte {
+	h, _ := bcrypt.GenerateFromPassword([]byte("nowen-reader-timing-equalizer"), 10)
+	return h
+}()
+
 // Register handles POST /api/auth/register
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
@@ -156,15 +164,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	if user == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
+		respondLoginFailure(c, req.Username)
 		return
 	}
 
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		respondLoginFailure(c, req.Username)
 		return
 	}
+
+	// 口令正确：清零该账号的失败计数——正确口令永远不会被限流挡下
+	middleware.ResetLoginFailures(req.Username)
 
 	// Create session
 	token := uuid.New().String()
@@ -189,6 +201,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			AiEnabled: user.AiEnabled,
 		},
 	})
+}
+
+// respondLoginFailure 记录一次口令校验失败：额度内回 401（对外文案与用户名
+// 是否存在无关），额度用尽回 429。只统计失败、成功即清零，因此攻击者无法
+// 用错误口令把管理员锁在门外，也无法靠换 IP 绕过账号维度的限制。
+func respondLoginFailure(c *gin.Context, username string) {
+	if !middleware.RecordLoginFailure(username) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many login attempts. Please wait a moment."})
+		return
+	}
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 }
 
 // Logout handles POST /api/auth/logout

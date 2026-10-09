@@ -13,9 +13,9 @@ func registerAuthRoutes(api *gin.RouterGroup) {
 
 	authGroup := api.Group("/auth")
 	{
-		// Login/register use strict rate limiting to prevent brute-force
+		// Login uses IP + account dimension rate limiting; register keeps the IP-only limiter
 		authGroup.POST("/register", middleware.RateLimitAuth(), auth.Register)
-		authGroup.POST("/login", middleware.RateLimitAuth(), auth.Login)
+		authGroup.POST("/login", middleware.RateLimitLogin(), auth.Login)
 		// Logout and session check don't need strict limiting
 		authGroup.POST("/logout", auth.Logout)
 		authGroup.GET("/me", auth.Me)

@@ -85,7 +85,12 @@ func (w *gzipResponseWriter) WriteHeader(code int) {
 	if shouldCompressContentType(contentType) {
 		w.shouldCompress = true
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Vary", "Accept-Encoding")
+		// 保留 handler 已设置的 Vary（如 Cookie/Authorization），避免覆盖
+		if v := w.Header().Get("Vary"); v != "" {
+			w.Header().Set("Vary", v+", Accept-Encoding")
+		} else {
+			w.Header().Set("Vary", "Accept-Encoding")
+		}
 		w.Header().Del("Content-Length") // Length changes after compression
 	}
 

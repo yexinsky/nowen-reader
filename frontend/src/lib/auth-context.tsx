@@ -2,6 +2,8 @@
 
 import { apiClient } from "@/lib/apiClient";
 import { setUserScope } from "@/hooks/useComicList";
+import { invalidateSiteSettings } from "@/hooks/useSiteSettings";
+import { clearServiceWorkerCache } from "@/lib/pwa";
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 
 interface AuthUser {
@@ -67,6 +69,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (username: string, password: string) => {
     const data = await apiClient.post("/api/auth/login", { username, password }) as any;
     const u = data.user;
+    // 站点设置按登录态返回不同字段（游客响应已裁掉路径与开关），
+    // 必须在切换身份前失效缓存，否则登录后仍读到游客态那份。
+    invalidateSiteSettings();
     setUser(u);
     if (u) setUserScope(u.id, u.role);
     setNeedsSetup(false);
@@ -75,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = async (username: string, password: string, nickname?: string) => {
     const data = await apiClient.post("/api/auth/register", { username, password, nickname }) as any;
     const u = data.user;
+    invalidateSiteSettings();
     setUser(u);
     if (u) setUserScope(u.id, u.role);
     setNeedsSetup(false);
@@ -82,6 +88,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try { await apiClient.post("/api/auth/logout"); } catch { /* ignore */ }
+    clearServiceWorkerCache(); // 清除 page/thumbnail/chapter 本地缓存，避免共用浏览器残留
+    invalidateSiteSettings(); // 丢弃登录态的站点设置（含 scraperEnabled 等仅管理员可见字段）
     setUser(null);
     setUserScope("", "");
   };

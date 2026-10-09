@@ -91,6 +91,13 @@ services:
       # 飞牛共享目录/SMB 无法 chown 时使用递归宽松模式（会回退到 a+rwX）
       # - PERMISSION_FIX_MODE=recursive-relaxed
 
+    # 日志轮转上限（防止 4xx 访问日志写满磁盘）
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     # 内存限制（飞牛OS设备内存通常有限，可根据需要调整）
     deploy:
       resources:

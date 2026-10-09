@@ -97,11 +97,24 @@ func checkLibraryManageAccess(c *gin.Context, libraryID string) error {
 
 type ImageHandler struct{}
 
-const contextKeyPrivateImageCache = "private_image_cache"
-
 // NewImageHandler creates a new ImageHandler.
 func NewImageHandler() *ImageHandler {
 	return &ImageHandler{}
+}
+
+// authedMediaCache 统一受保护媒体的缓存语义。
+// 这些响应依赖 Cookie 鉴权，必须 private，否则共享缓存/CDN 会把内容发给未登录访客。
+func authedMediaCache(c *gin.Context, maxAge int) {
+	c.Header("Cache-Control", fmt.Sprintf("private, max-age=%d", maxAge))
+	c.Header("Vary", "Cookie, Authorization")
+}
+
+// authedJSONNoStore 用于携带正文内容的 JSON 响应（如小说/PDF 章节）。
+// 正文一旦被边缘缓存就会绕过鉴权发给未登录访客，因此禁止任何缓存；
+// 离线阅读由前端 Service Worker 自行缓存，不受此头影响。
+func authedJSONNoStore(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Vary", "Cookie, Authorization")
 }
 
 // ============================================================
@@ -246,7 +259,7 @@ func (h *ImageHandler) GetPageImage(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", result.MimeType)
-	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	authedMediaCache(c, 31536000)
 	c.Header("Content-Length", strconv.Itoa(len(result.Data)))
 	c.Header("ETag", etag)
 	c.Data(http.StatusOK, result.MimeType, result.Data)
@@ -301,12 +314,7 @@ func (h *ImageHandler) GetThumbnail(c *gin.Context) {
 			strconv.FormatInt(stat.Size(), 36),
 		)
 	}
-	cacheControl := "public, max-age=300, must-revalidate"
-	if c.GetBool(contextKeyPrivateImageCache) {
-		cacheControl = "private, max-age=300, must-revalidate"
-		c.Header("Vary", "Authorization, Cookie")
-	}
-	c.Header("Cache-Control", cacheControl)
+	authedMediaCache(c, 300)
 
 	// Check If-None-Match for 304
 	if c.GetHeader("If-None-Match") == etag {
@@ -354,7 +362,7 @@ func (h *ImageHandler) serveGroupCoverThumbnail(c *gin.Context, id string) {
 			return
 		}
 		c.Header("Content-Type", http.DetectContentType(data))
-		c.Header("Cache-Control", "public, max-age=300, must-revalidate")
+		authedMediaCache(c, 300)
 		c.Header("Content-Length", strconv.Itoa(len(data)))
 		c.Header("ETag", etag)
 		c.Data(http.StatusOK, c.Writer.Header().Get("Content-Type"), data)
@@ -372,6 +380,7 @@ func (h *ImageHandler) serveGroupCoverThumbnail(c *gin.Context, id string) {
 		case strings.HasPrefix(rawCoverURL, "data:image/"):
 			if err := service.CacheGroupCoverDataURL(groupID, rawCoverURL); err == nil {
 				if data, err := os.ReadFile(cachePath); err == nil && len(data) > 0 {
+					authedMediaCache(c, 300)
 					c.Data(http.StatusOK, http.DetectContentType(data), data)
 					return
 				}
@@ -423,7 +432,7 @@ func (h *ImageHandler) serveSeriesCoverThumbnail(c *gin.Context, seriesID string
 			return
 		}
 		c.Header("Content-Type", http.DetectContentType(data))
-		c.Header("Cache-Control", "public, max-age=300, must-revalidate")
+		authedMediaCache(c, 300)
 		c.Header("Content-Length", strconv.Itoa(len(data)))
 		c.Header("ETag", etag)
 		c.Data(http.StatusOK, c.Writer.Header().Get("Content-Type"), data)
@@ -695,7 +704,7 @@ func (h *ImageHandler) GetPdfFile(c *gin.Context) {
 	c.Header("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 	c.Header("Content-Disposition", "inline") // 防止微信浏览器触发下载
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Cache-Control", "public, max-age=86400")
+	authedMediaCache(c, 86400)
 	c.Header("Accept-Ranges", "bytes")
 
 	// 支持 Range 请求（PDF.js 需要）
@@ -737,6 +746,7 @@ func (h *ImageHandler) GetChapterContent(c *gin.Context) {
 		log.Printf("[chapter] Slow chapter load for %s chapter %d: %v", id, chapterIndex, elapsed)
 	}
 
+	authedJSONNoStore(c)
 	c.JSON(http.StatusOK, gin.H{
 		"content":  chapter.Content,
 		"title":    chapter.Title,
@@ -787,7 +797,7 @@ func (h *ImageHandler) GetEpubResource(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", result.MimeType)
-	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	authedMediaCache(c, 31536000)
 	c.Header("Content-Length", strconv.Itoa(len(result.Data)))
 	c.Header("ETag", etag)
 	c.Data(http.StatusOK, result.MimeType, result.Data)
@@ -925,7 +935,7 @@ func (h *ImageHandler) GetEmbeddedImage(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", img.MimeType)
-	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	authedMediaCache(c, 31536000)
 	c.Header("Content-Length", strconv.Itoa(len(img.Data)))
 	c.Header("ETag", etag)
 	c.Data(http.StatusOK, img.MimeType, img.Data)

@@ -71,6 +71,14 @@ services:
       # 上游域名池覆盖（域名动态更新失败时的兜底，逗号分隔）
       # - JM_API_DOMAINS=www.cdnhjk.net,www.cdngwc.cc
       # - JM_IMAGE_DOMAINS=cdn-msp.jmapiproxy1.cc,cdn-msp.jmapiproxy2.cc
+
+    # 日志轮转上限（防止 4xx 访问日志写满磁盘）
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     # 内存限制（NAS 通常内存有限）
     deploy:
       resources:

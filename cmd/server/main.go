@@ -113,6 +113,22 @@ func main() {
 
 	r := gin.New() // Use gin.New() instead of gin.Default() for custom middleware
 
+	// 只信任本机反代（cloudflared）。Gin 解析 XFF 时从右往左取第一个不可信 IP，
+	// 因此客户端伪造的最左值不会成为限流/日志的键。
+	trustedProxies := []string{"127.0.0.1", "::1"}
+	if v := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES")); v != "" {
+		trustedProxies = nil
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				trustedProxies = append(trustedProxies, p)
+			}
+		}
+	}
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		log.Printf("[Main] SetTrustedProxies(%v) failed, disabling proxy trust: %v", trustedProxies, err)
+		_ = r.SetTrustedProxies(nil) // nil = 不信任任何代理，ClientIP 退化为 RemoteAddr
+	}
+
 	// Global middleware stack
 	r.Use(middleware.Recovery())
 	if mode == gin.ReleaseMode {
@@ -125,6 +141,8 @@ func main() {
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RequestTimeout(30 * time.Second))
 	r.Use(middleware.Gzip())
+	// 请求体上限：未鉴权端点 256KB / 鉴权 JSON 16MB / 文件上传 1GB，按路由分档
+	r.Use(middleware.BodyLimit())
 
 	// Register all API routes
 	handler.AppVersion = Version

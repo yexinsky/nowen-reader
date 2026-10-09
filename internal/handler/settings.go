@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/config"
+	"github.com/nowen-reader/nowen-reader/internal/middleware"
 )
 
 // SettingsHandler handles site settings API endpoints.
@@ -36,6 +37,19 @@ type SiteConfigResponse struct {
 	ScraperEnabled      bool     `json:"scraperEnabled"`
 	EbookTypeAutoDetect string   `json:"ebookTypeAutoDetect"` // off | comics | all
 	PdfRendererPath     string   `json:"pdfRendererPath"`     // PDF 渲染外部工具路径
+}
+
+// PublicSiteConfigResponse 是未鉴权可见的最小字段集（登录页需要）。
+// 注意：/api/site-settings 未挂 AuthRequired，绝不能包含目录、外部工具等部署布局信息。
+type PublicSiteConfigResponse struct {
+	SiteName         string `json:"siteName"`
+	SiteIcon         string `json:"siteIcon"`
+	ThumbnailWidth   int    `json:"thumbnailWidth"`
+	ThumbnailHeight  int    `json:"thumbnailHeight"`
+	PageSize         int    `json:"pageSize"`
+	Language         string `json:"language"`
+	Theme            string `json:"theme"`
+	RegistrationMode string `json:"registrationMode"`
 }
 
 // GET /api/site-settings — Get site settings
@@ -97,6 +111,28 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	}
 	if resp.Theme == "" {
 		resp.Theme = "dark"
+	}
+
+	// 响应内容随会话（游客/管理员）变化，必须禁止共享缓存，
+	// 否则边缘缓存可能把管理员那份（含目录路径）回给未登录访客。
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Vary", "Cookie, Authorization")
+
+	// 公开路由没有 AuthRequired，不能用 GetCurrentUser（恒为 nil），
+	// 必须自行解析会话 Cookie：非管理员（含游客）只返回最小字段集，
+	// 避免回显 comicsDir/novelsDir/extra*Dirs/pdfRendererPath/scraperEnabled。
+	if user := middleware.ResolveSessionUserReadOnly(c); user == nil || user.Role != "admin" {
+		c.JSON(http.StatusOK, PublicSiteConfigResponse{
+			SiteName:         resp.SiteName,
+			SiteIcon:         resp.SiteIcon,
+			ThumbnailWidth:   resp.ThumbnailWidth,
+			ThumbnailHeight:  resp.ThumbnailHeight,
+			PageSize:         resp.PageSize,
+			Language:         resp.Language,
+			Theme:            resp.Theme,
+			RegistrationMode: resp.RegistrationMode,
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, resp)
