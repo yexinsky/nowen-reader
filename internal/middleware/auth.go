@@ -272,7 +272,11 @@ func authUserFromModel(user *model.User) *model.AuthUser {
 
 // IsRequestSecure determines if the request is over HTTPS.
 // Checks X-Forwarded-Proto for reverse proxy scenarios (NAS/LAN).
+// Request 为 nil（例如直接构造的测试上下文）时按「不安全」处理。
 func IsRequestSecure(c *gin.Context) bool {
+	if c.Request == nil {
+		return false
+	}
 	if c.Request.TLS != nil {
 		return true
 	}
@@ -281,23 +285,28 @@ func IsRequestSecure(c *gin.Context) bool {
 }
 
 // SetSessionCookie sets the session cookie on the response.
-// 注意：不设置 Secure 标志，因为：
-// 1. 本项目主要用于局域网/NAS 环境，很多用户通过 HTTP 访问
-// 2. Flutter App (dio_cookie_manager) 在 HTTP 连接时不会发送 Secure Cookie
-// 3. httpOnly=true 已经提供了足够的 XSS 防护
+// Secure 标志按连接动态下发：
+//   - 经反代/Cloudflare 走 HTTPS 的请求（X-Forwarded-Proto: https）→ 带 Secure，
+//     浏览器此后只在 HTTPS 上发送该 Cookie，明文请求不会带上；
+//   - 局域网明文直连 → 不带 Secure，保持局域网可直接登录
+//     （Flutter 走局域网地址时 dio_cookie_manager 也只在这种情况下才发送该 Cookie）。
+//
+// 清 Cookie 的三处必须使用同一判定，否则明文请求上的登出指令会被浏览器忽略，
+// 表现为「登出后仍是登录状态」。
 func SetSessionCookie(c *gin.Context, token string) {
 	c.SetSameSite(http.SameSiteLaxMode)
 	cookiePath := config.BasePath()
-	c.SetCookie(SessionCookie, token, SessionMaxAge, cookiePath, "", false, true)
+	c.SetCookie(SessionCookie, token, SessionMaxAge, cookiePath, "", IsRequestSecure(c), true)
 }
 
 // ClearSessionCookie removes the session cookie.
 func ClearSessionCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
 	cookiePath := config.BasePath()
-	c.SetCookie(SessionCookie, "", -1, cookiePath, "", false, true)
+	secure := IsRequestSecure(c)
+	c.SetCookie(SessionCookie, "", -1, cookiePath, "", secure, true)
 	if cookiePath != "/" {
-		c.SetCookie(SessionCookie, "", -1, "/", "", false, true)
+		c.SetCookie(SessionCookie, "", -1, "/", "", secure, true)
 	}
 }
 
