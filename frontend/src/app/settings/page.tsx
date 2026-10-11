@@ -31,6 +31,7 @@ import {
   ChevronDown,
   Mail,
   Settings as SettingsIcon,
+  Palette,
 } from "lucide-react";
 import { useLocale, useTranslation } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
@@ -41,6 +42,7 @@ import dynamic from "next/dynamic";
 import { appPath } from "@/lib/base-path";
 import { PageHeader } from "@/components/PageHeader";
 import { JmSourcePanel } from "@/components/settings/JmSourcePanel";
+import { PicaSourcePanel } from "@/components/settings/PicaSourcePanel";
 
 /* ── 懒加载面板 ── */
 const LoadingSkeleton = () => (
@@ -96,6 +98,7 @@ const NASDiagnosticsPanel = dynamic(
 type SettingsTab =
   | "account"
   | "jm-source"
+  | "pica"
   | "site"
   | "ai"
   | "scan-rules"
@@ -141,6 +144,7 @@ export default function SettingsPage() {
     "account",
     "reader",
     "jm-source",
+    "pica",
     ...(isAdmin
       ? ["site" as const, "ai" as const, "scan-rules" as const, "users" as const, "libraries" as const, "user-groups" as const, "diagnostics" as const]
       : []),
@@ -176,6 +180,7 @@ export default function SettingsPage() {
         { id: "account", label: "我的账户", icon: <UserCog className="h-[18px] w-[18px]" />, desc: "密码、昵称", keywords: ["密码", "昵称", "password", "profile"] },
         { id: "reader", label: "阅读与显示", icon: <Eye className="h-[18px] w-[18px]" />, desc: "模式、方向、隐私、语言", keywords: ["reader", "reading", "page", "zoom", "direction", "animation", "progress", "阅读器", "阅读", "方向", "缩放", "翻页", "模式", "进度", "隐私", "成人", "封面", "语言", "中文", "英文"] },
         { id: "jm-source", label: "在线漫画源", icon: <Globe2 className="h-[18px] w-[18px]" />, desc: "内置服务、代理、画质", keywords: ["在线", "漫画", "JM", "代理", "proxy", "画质", "内置服务"] },
+        { id: "pica", label: "哔咔漫画", icon: <Palette className="h-[18px] w-[18px]" />, desc: "哔咔账号、代理、画质、下载", keywords: ["哔咔", "pica", "picacg", "漫画", "代理", "proxy", "画质", "打卡"] },
       ],
     },
     {
@@ -272,6 +277,7 @@ export default function SettingsPage() {
     >
       {activeTab === "account" && <AccountPanel />}
       {activeTab === "jm-source" && <JmSourcePanel />}
+      {activeTab === "pica" && <PicaSourcePanel />}
       {activeTab === "site" && <SiteSettingsPanel />}
       {activeTab === "ai" && <AISettingsPanel />}
       {activeTab === "scan-rules" && <ScanRulesPanel />}

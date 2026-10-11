@@ -34,9 +34,13 @@ export default function MobileBottomNav() {
   const isReaderPage =
     pathname?.startsWith("/reader/") ||
     pathname?.startsWith("/novel/") ||
-    pathname?.startsWith("/jm/reader/");
-  const isComicDetailPage = pathname?.startsWith("/comic/") || pathname?.startsWith("/jm/comic/");
-  const isJmLoginPage = pathname?.startsWith("/jm/login");
+    pathname?.startsWith("/jm/reader/") ||
+    pathname?.startsWith("/pica/reader/");
+  const isComicDetailPage =
+    pathname?.startsWith("/comic/") ||
+    pathname?.startsWith("/jm/comic/") ||
+    pathname?.startsWith("/pica/comic/");
+  const isJmLoginPage = pathname?.startsWith("/jm/login") || pathname?.startsWith("/pica/login");
 
   const currentTab = searchParams.get("tab");
 

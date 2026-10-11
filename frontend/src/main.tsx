@@ -51,6 +51,13 @@ const JmHistory = React.lazy(() => import("@/app/jm/history/page"));
 const JmTags = React.lazy(() => import("@/app/jm/tags/page"));
 const JmComicDetail = React.lazy(() => import("@/app/jm/comic/[aid]/page"));
 const JmReader = React.lazy(() => import("@/app/jm/reader/[pid]/page"));
+const PicaHome = React.lazy(() => import("@/app/pica/page"));
+const PicaLogin = React.lazy(() => import("@/app/pica/login/page"));
+const PicaSearch = React.lazy(() => import("@/app/pica/search/page"));
+const PicaFavorites = React.lazy(() => import("@/app/pica/favorites/page"));
+const PicaHistory = React.lazy(() => import("@/app/pica/history/page"));
+const PicaComicDetail = React.lazy(() => import("@/app/pica/comic/[id]/page"));
+const PicaReader = React.lazy(() => import("@/app/pica/reader/[id]/page"));
 
 /** 动态设置浏览器标签页标题 */
 function SiteTitle() {
@@ -142,6 +149,11 @@ function AppRoutes() {
         <Route path="jm/favorites" element={<JmFavorites />} />
         <Route path="jm/history" element={<JmHistory />} />
         <Route path="jm/tags" element={<JmTags />} />
+        <Route path="pica" element={<PicaHome />} />
+        <Route path="pica/login" element={<PicaLogin />} />
+        <Route path="pica/search" element={<PicaSearch />} />
+        <Route path="pica/favorites" element={<PicaFavorites />} />
+        <Route path="pica/history" element={<PicaHistory />} />
       </Route>
 
       <Route element={<AnimatedOutlet />}>
@@ -153,6 +165,8 @@ function AppRoutes() {
         <Route path="dev/book-flip" element={<BookFlipDevPage />} />
         <Route path="jm/comic/:aid" element={<JmComicDetail />} />
         <Route path="jm/reader/:pid" element={<JmReader />} />
+        <Route path="pica/comic/:id" element={<PicaComicDetail />} />
+        <Route path="pica/reader/:id" element={<PicaReader />} />
       </Route>
     </Routes>
   );
