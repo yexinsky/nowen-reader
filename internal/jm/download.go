@@ -24,51 +24,30 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
+
+	"github.com/nowen-reader/nowen-reader/internal/namesafe"
 )
 
-/* ── 名称清洗(JMComic-qt ToolUtil.GetCanSaveName 逐句移植) ── */
+// SanitizeName/SafeName/fitPathName 名称清洗(实现抽到 internal/namesafe 供多在线源共用)。
+const (
+	maxNameRunes   = namesafe.MaxNameRunes
+	maxFullPathLen = namesafe.MaxFullPathLen
+)
 
-// maxNameRunes 单级名称字符数上限:254//3-1 = 83。
-// 依据为 UTF-8 下 CJK 单字 3 字节,83×3=249 ≤ 255 的文件名字节上限。
-const maxNameRunes = 254/3 - 1
+func SanitizeName(name string) string { return namesafe.SanitizeName(name) }
 
-// maxFullPathLen 全路径字节预算:Windows MAX_PATH=260,预留扩展名/同名序号余量。
-const maxFullPathLen = 240
+func SafeName(name, fallback string) string { return namesafe.SafeName(name, fallback) }
 
-// illegalNameChars Windows 非法字符 + \0\t\r\n(JMComic-qt 同款字符类)。
-// 目录分隔符一并删除,保证清洗结果恒为单级名称,不会逃出目标目录。
-var illegalNameChars = regexp.MustCompile("[\\\\/:*?\"<>|\x00\t\r\n]")
-
-// SanitizeName 清洗单级路径名(移植 JMComic-qt ToolUtil.GetCanSaveName):
-// 删非法字符 → 去尾点 → 去首尾空格 → 截断 83 字符 → 再去尾点/首尾空格。
-func SanitizeName(name string) string {
-	s := illegalNameChars.ReplaceAllString(name, "")
-	s = strings.TrimRight(s, ".")
-	s = strings.Trim(s, " ")
-	if r := []rune(s); len(r) > maxNameRunes {
-		s = string(r[:maxNameRunes])
-	}
-	return strings.Trim(strings.TrimRight(s, "."), " ")
+func fitPathName(dir, name string, reserveBytes int) string {
+	return namesafe.FitPathName(dir, name, reserveBytes)
 }
 
-// SafeName 清洗并保证非空:清洗结果为空时回退 fallback(通常为 aid/pid),
-// 仍为空回退 "untitled"。JMComic-qt 无此兜底,空名会直接导致写盘失败。
-func SafeName(name, fallback string) string {
-	if s := SanitizeName(name); s != "" {
-		return s
-	}
-	if s := SanitizeName(fallback); s != "" {
-		return s
-	}
-	return "untitled"
-}
+/* ── 任务模型 ── */
 
 // maxDownloadTags 单本下载自动挂到书库的标签数上限(防上游异常数据写脏书库)。
 const maxDownloadTags = 30
@@ -92,29 +71,6 @@ func normalizeJmTags(raw []any) []string {
 		}
 	}
 	return out
-}
-
-// fitPathName 按目标目录收紧名称:保证 dir/name 的全路径字节数不超过
-// maxFullPathLen(Windows MAX_PATH 兜底;CJK 按 UTF-8 字节累计,估算偏保守)。
-func fitPathName(dir, name string, reserveBytes int) string {
-	avail := maxFullPathLen - len(dir) - 1 - reserveBytes
-	if avail < 16 {
-		avail = 16 // 目录本身过长时保底可读性,写盘失败会以「归档失败」显式上报
-	}
-	if len(name) <= avail {
-		return name
-	}
-	var b strings.Builder
-	used := 0
-	for _, r := range name {
-		size := utf8.RuneLen(r)
-		if used+size > avail {
-			break
-		}
-		b.WriteRune(r)
-		used += size
-	}
-	return SafeName(b.String(), "untitled")
 }
 
 /* ── 任务模型 ── */
@@ -417,8 +373,8 @@ func pageWorkers() int {
 }
 
 const (
-	pageAttempts    = 3               // 单页网络尝试次数
-	chapterAttempts = 2               // 整章补抓轮次(失败页再抓一轮)
+	pageAttempts    = 3 // 单页网络尝试次数
+	chapterAttempts = 2 // 整章补抓轮次(失败页再抓一轮)
 	retryBackoff    = 800 * time.Millisecond
 	imageTimeout    = 45 * time.Second // 单页整体超时(下载+解码+还原)
 )
@@ -830,7 +786,7 @@ func (m *DownloadManager) downloadPages(ctx context.Context, taskID string, chIn
 			}
 		}()
 	}
-	feed:
+feed:
 	for _, idx := range indices {
 		select {
 		case <-ctx.Done():

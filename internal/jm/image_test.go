@@ -339,7 +339,7 @@ func TestDownloadAndDecodePipeline(t *testing.T) {
 	}
 	// 落盘文件存在,键 = md5("{path}|{scramble}|{quality}|{num}")
 	key := md5Hex(path + "|0|medium|" + strconv.Itoa(num))
-	if _, err := os.Stat(filepath.Join(cache.dir, key+".jpg")); err != nil {
+	if _, err := os.Stat(filepath.Join(cache.Dir(), key+".jpg")); err != nil {
 		t.Fatalf("缓存文件应存在: %v", err)
 	}
 	// 二次请求命中缓存且字节一致

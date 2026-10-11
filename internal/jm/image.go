@@ -19,17 +19,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/nowen-reader/nowen-reader/internal/imgcache"
 	_ "golang.org/x/image/webp" // image.Decode 注册 webp(x/image,首帧)
 )
+
+// ImageCache 落盘 LRU 缓存(实现已抽到 internal/imgcache 供多在线源共用,类型别名保持兼容)。
+type ImageCache = imgcache.Cache
+
+// NewImageCache 构造缓存。
+func NewImageCache(dir string, limit int) *ImageCache { return imgcache.NewCache(dir, limit) }
 
 /* ── path 白名单(契约 #16 备注,mock/live 双模式生效) ── */
 
@@ -76,98 +79,6 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
-}
-
-/* ── 磁盘 LRU 缓存 ── */
-
-// ImageCache 落盘缓存:键 md5("{path}|{scramble}|{quality}"),文件 {key}.jpg。
-// 命中即刷新 mtime(真 LRU);写入为 .tmp 原子替换 + 写前二次命中检查(并发同 key 复用);
-// 按文件数 LRU 淘汰(超限删最旧 mtime,契约 JM_IMAGE_CACHE_LIMIT=500)。
-type ImageCache struct {
-	dir   string
-	limit int
-	mu    sync.Mutex
-}
-
-// NewImageCache 构造缓存;dir 不存在时在写入时惰性创建。limit 为文件数上限。
-func NewImageCache(dir string, limit int) *ImageCache {
-	if limit < 1 {
-		limit = 1
-	}
-	return &ImageCache{dir: dir, limit: limit}
-}
-
-func (c *ImageCache) keyPath(key string) string {
-	return filepath.Join(c.dir, key+".jpg")
-}
-
-// Get 读取缓存;命中刷新 mtime。
-func (c *ImageCache) Get(key string) ([]byte, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	p := c.keyPath(key)
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return nil, false
-	}
-	_ = os.Chtimes(p, time.Now(), time.Now())
-	return data, true
-}
-
-// Put 写入缓存:.tmp 原子 os.Rename + 写前二次命中检查(并发同 key 复用先写入者)。
-// 返回实际生效的字节与是否复用既有文件;写入失败返回错误(契约:缓存写入失败 → 2001)。
-func (c *ImageCache) Put(key string, data []byte) ([]byte, bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := os.MkdirAll(c.dir, 0o755); err != nil {
-		return nil, false, err
-	}
-	p := c.keyPath(key)
-	// 写前二次命中检查:并发同 key 时另一个请求可能已落盘,直接复用
-	if exist, err := os.ReadFile(p); err == nil {
-		_ = os.Chtimes(p, time.Now(), time.Now())
-		return exist, true, nil
-	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return nil, false, err
-	}
-	if err := os.Rename(tmp, p); err != nil {
-		_ = os.Remove(tmp)
-		return nil, false, err
-	}
-	c.evictLocked()
-	return data, false, nil
-}
-
-// evictLocked 按文件数 LRU 淘汰:扫描 *.jpg,超限删最旧 mtime。调用方需持有 mu。
-func (c *ImageCache) evictLocked() {
-	entries, err := os.ReadDir(c.dir)
-	if err != nil {
-		return
-	}
-	type item struct {
-		path string
-		mod  time.Time
-	}
-	items := make([]item, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".jpg") {
-			continue // 排除 .tmp 中转与目录
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		items = append(items, item{filepath.Join(c.dir, e.Name()), info.ModTime()})
-	}
-	if len(items) <= c.limit {
-		return
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].mod.Before(items[j].mod) })
-	for i := 0; i < len(items)-c.limit; i++ {
-		_ = os.Remove(items[i].path)
-	}
 }
 
 /* ── 下载与解码 ── */
