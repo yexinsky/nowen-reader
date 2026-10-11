@@ -57,4 +57,5 @@ func SetupRoutes(r *gin.Engine) {
 	registerLibraryRoutes(api)
 	registerUserGroupRoutes(api)
 	registerJMRoutes(api)
+	registerPicaRoutes(api)
 }

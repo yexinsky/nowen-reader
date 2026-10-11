@@ -44,7 +44,12 @@ type jmDownloadDir struct {
 // jmDownloadTestDir 内置测试目录(不入库):<DataDir>/jm/download-test。
 // 首次使用(尚未在设置里选定书库目录)时的默认落点,避免误写书库。
 func jmDownloadTestDir() string {
-	return filepath.Join(config.DataDir(), "jm", "download-test")
+	return downloadTestDir("jm")
+}
+
+// downloadTestDir 在线源内置测试目录(不入库),JM/Pica 等源共用。
+func downloadTestDir(source string) string {
+	return filepath.Join(config.DataDir(), source, "download-test")
 }
 
 func jmDirExists(p string) bool {
@@ -54,7 +59,8 @@ func jmDirExists(p string) bool {
 
 // jmDownloadDirCandidates 组装候选目录:启用的漫画/混合书库各根路径 + 内置测试目录。
 // 默认项取自设置(命中候选才生效),否则回退测试目录。
-func jmDownloadDirCandidates(uid string) []jmDownloadDir {
+// preferred 为该源设置里的上次下载目录;testSource 为该源测试目录命名空间(jm/pica)。
+func downloadDirCandidates(uid, preferred, testSource string) []jmDownloadDir {
 	out := make([]jmDownloadDir, 0, 8)
 	libraries, err := store.GetAllLibraries()
 	if err == nil {
@@ -86,7 +92,7 @@ func jmDownloadDirCandidates(uid string) []jmDownloadDir {
 		}
 	}
 
-	testDir := jmDownloadTestDir()
+	testDir := downloadTestDir(testSource)
 	out = append(out, jmDownloadDir{
 		Label:     "测试目录(不入库)",
 		Path:      testDir,
@@ -96,7 +102,7 @@ func jmDownloadDirCandidates(uid string) []jmDownloadDir {
 	})
 
 	// 默认项:设置命中候选优先,否则测试目录
-	preferred := strings.TrimSpace(jmService().Settings().DownloadDir)
+	preferred = strings.TrimSpace(preferred)
 	defIdx := -1
 	for i := range out {
 		if preferred != "" && sameCleanPath(out[i].Path, preferred) {
@@ -116,6 +122,11 @@ func jmDownloadDirCandidates(uid string) []jmDownloadDir {
 		out[defIdx].IsDefault = true
 	}
 	return out
+}
+
+// jmDownloadDirCandidates JM 下载目录候选(源内包装)。
+func jmDownloadDirCandidates(uid string) []jmDownloadDir {
+	return downloadDirCandidates(uid, jmService().Settings().DownloadDir, "jm")
 }
 
 func sameCleanPath(a, b string) bool {
