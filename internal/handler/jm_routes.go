@@ -133,6 +133,10 @@ func registerJMAuthRoutes(g *gin.RouterGroup) {
 		client := svc.NewSessionClient()
 		userInfoRaw, cookies, err := client.Login(c.Request.Context(), body.Username, body.Password, body.Captcha)
 		if err != nil {
+			// 登录失败必须落日志:上游对真实凭据的返回(风控/验证码/凭据错误)只有这里能观测到
+			apiErr := jm.ClassifyError(err, "登录请求失败")
+			log.Printf("[jm] login failed user=%s code=%d msg=%q data=%v",
+				body.Username, apiErr.Code, apiErr.Msg, apiErr.Data)
 			jmFailErr(c, err, "登录请求失败")
 			return
 		}
