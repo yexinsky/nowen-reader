@@ -32,8 +32,8 @@ func TestLikeStateFromMsg(t *testing.T) {
 		{"點讚成功", true}, // 繁体
 		{"喜欢上了", true},
 		{"喜歡成功", true},
-		{"", nil},       // 无法判定 → null
-		{"什么都没有", nil},  // 无法判定 → null
+		{"", nil},           // 无法判定 → null
+		{"什么都没有", nil},      // 无法判定 → null
 		{"取消xxxx点赞", false}, // 取消优先于点赞
 	}
 	for _, c := range cases {
@@ -351,7 +351,6 @@ func TestAnyToInt(t *testing.T) {
 		t.Fatal("nil 应失败")
 	}
 }
-
 
 func TestPrettifySignMsg(t *testing.T) {
 	cases := []struct{ in, want string }{

@@ -6,14 +6,14 @@ import (
 
 // JM 错误码(MOBILE_API.md §0.3,与 Python 版 core/errors.py 对齐)
 const (
-	CodeOK               = 0
-	CodeBadCredentials   = 1001 // 用户名或密码错误
-	CodeUnauthorized     = 1002 // token 无效/过期(HTTP 401)
-	CodeCaptchaRequired  = 1003 // 需要验证码
-	CodeUpstream         = 2001 // JM 服务端返回错误(data.upstream)
-	CodeNetwork          = 2002 // 网络不可达/超时(data.reason)
-	CodeNotFound         = 3001 // 资源不存在
-	CodeInternal         = 4000 // 内部错误(data=null)
+	CodeOK              = 0
+	CodeBadCredentials  = 1001 // 用户名或密码错误
+	CodeUnauthorized    = 1002 // token 无效/过期(HTTP 401)
+	CodeCaptchaRequired = 1003 // 需要验证码
+	CodeUpstream        = 2001 // JM 服务端返回错误(data.upstream)
+	CodeNetwork         = 2002 // 网络不可达/超时(data.reason)
+	CodeNotFound        = 3001 // 资源不存在
+	CodeInternal        = 4000 // 内部错误(data=null)
 )
 
 // APIError 是本包对外统一的业务错误,由 HTTP 层转成 {code,msg,data} 包装。

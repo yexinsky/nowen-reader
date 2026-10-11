@@ -9,11 +9,11 @@ package jm
 
 // 上游协议常量(jmcomic/jm_config.py:100-105,一字不差)
 const (
-	appTokenSecret    = "18comicAPP"        // 常规请求 token 密钥
-	appTokenSecret2   = "18comicAPPContent" // /chapter_view_template 专用
-	appDataSecret     = "185Hcomic3PAPP7R"  // 响应 AES 解密密钥前缀
+	appTokenSecret        = "18comicAPP"        // 常规请求 token 密钥
+	appTokenSecret2       = "18comicAPPContent" // /chapter_view_template 专用
+	appDataSecret         = "185Hcomic3PAPP7R"  // 响应 AES 解密密钥前缀
 	apiDomainServerSecret = "diosfjckwpqpdfjkvnqQjsik"
-	defaultAppVersion = "2.0.19"
+	defaultAppVersion     = "2.0.19"
 )
 
 // 乱序分割数阈值(jm_config.py:96-97;jm_toolkit.py:905-926)

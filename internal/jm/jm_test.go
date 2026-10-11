@@ -75,7 +75,7 @@ func TestGetNum(t *testing.T) {
 		if aid >= 421926 {
 			x = 8
 		}
-		return int(s[len(s)-1]) % x * 2 + 2
+		return int(s[len(s)-1])%x*2 + 2
 	}
 	if got := getNum(0, 421925, "00001.jpg"); got != ref(0, 421925, "00001.jpg") {
 		t.Fatalf("getNum(0,421925) = %d, want %d", getNum(0, 421925, "00001.jpg"), ref(0, 421925, "00001.jpg"))
