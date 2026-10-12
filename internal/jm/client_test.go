@@ -8,9 +8,13 @@ package jm
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -160,6 +164,50 @@ func TestReadHTTPBodyStripsBOM(t *testing.T) {
 		}
 		if env.Code != 200 {
 			t.Fatalf("%s: code = %d, want 200", c.name, env.Code)
+		}
+	}
+}
+
+// ── doAPIRequest data 字段形态:字符串(加密)解密;裸 JSON(数组/对象)透传;
+// 缺省按 null(2026-10 上游 /daily_chk 未登录时实测返回 {"code":200,"data":[]}) ──
+
+func TestDoAPIRequestDataShapes(t *testing.T) {
+	c := NewClient("", nil)
+	ts := strconv.FormatInt(c.ts.Load(), 10)
+	encrypted, err := encodeRespData([]byte(`{"msg":"hello"}`), ts, "")
+	if err != nil {
+		t.Fatalf("encodeRespData: %v", err)
+	}
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/string":
+			fmt.Fprintf(w, `{"code":200,"data":%q}`, encrypted)
+		case "/array":
+			io.WriteString(w, `{"code":200,"data":[]}`)
+		case "/object":
+			io.WriteString(w, `{"code":200,"data":{"msg":"直接对象"}}`)
+		case "/absent":
+			io.WriteString(w, `{"code":200}`)
+		}
+	}))
+	defer srv.Close()
+	c.http = srv.Client() // 信任测试服务端 TLS 证书
+
+	cases := []struct{ path, want string }{
+		{"/string", `{"msg":"hello"}`}, // 加密字符串照旧解密
+		{"/array", `[]`},               // 裸数组透传(此前误报「data 字段非字符串」)
+		{"/object", `{"msg":"直接对象"}`},
+		{"/absent", `null`},
+	}
+	for _, tc := range cases {
+		got, err := c.doAPIRequest(context.Background(), "GET", srv.URL+tc.path, nil, "")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if string(got) != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.path, got, tc.want)
 		}
 	}
 }

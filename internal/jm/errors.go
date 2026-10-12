@@ -56,6 +56,14 @@ func errUnauthorized() *APIError {
 	return &APIError{Code: CodeUnauthorized, Msg: "登录已失效,请重新登录"}
 }
 
+// errUnauthorizedMsg 1002 自定义文案(签到静默失效等场景,给出比「登录已失效」更精确的指引)。
+func errUnauthorizedMsg(msg string) *APIError {
+	if msg == "" {
+		return errUnauthorized()
+	}
+	return &APIError{Code: CodeUnauthorized, Msg: msg}
+}
+
 // UpstreamDetail 提取上游错误详情(2001 的 data.upstream 字段),供服务端日志诊断;
 // 非上游错误或无详情返回空串。
 func UpstreamDetail(err error) string {

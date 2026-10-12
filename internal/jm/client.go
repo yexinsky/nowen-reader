@@ -290,8 +290,13 @@ func (c *Client) doAPIRequest(ctx context.Context, method, endpoint string, form
 	if envelope.Code != 200 {
 		return nil, c.mapUpstreamBusinessError(envelope.Code, envelope.message(), raw)
 	}
-	// data 为加密字符串;个别端点(未知)可能直接给 JSON 对象,做兼容
-	if len(envelope.Data) > 0 && envelope.Data[0] == '{' {
+	// data 字段形态实测多样:常规端点为 base64(AES) 字符串需解密;裸 JSON(对象/
+	// 数组等)直接透传(如 /daily_chk 未登录时静默返回 {"code":200,"data":[]});
+	// data 缺省按 null 处理(对齐 Python resp.get("data") 语义)。
+	if len(envelope.Data) == 0 {
+		return []byte("null"), nil
+	}
+	if envelope.Data[0] != '"' {
 		return envelope.Data, nil
 	}
 	var dataB64 string

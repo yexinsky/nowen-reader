@@ -4,8 +4,14 @@ package jm
 // ComicItem 封面归一。口径对照 mobile/server/core/live.py 与 MOBILE_API.md。
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -365,5 +371,72 @@ func TestPrettifySignMsg(t *testing.T) {
 		if got := prettifySignMsg(c.in); got != c.want {
 			t.Fatalf("prettifySignMsg(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// ── #30 SignDo:上游对失效登录态静默返回 {"code":200,"data":[]} 时,
+// 通过复查签到状态判定真实结果(2026-10 线上实测:AVS 过期签到不落账) ──
+
+func TestSignDoVerifiesSilentNoop(t *testing.T) {
+	c := NewClient("", nil)
+	ts := strconv.FormatInt(c.ts.Load(), 10)
+	today := time.Now().Day()
+
+	dailySigned := false
+	chkBody := `{"code":200,"data":[]}`
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/setting":
+			io.WriteString(w, `{"code":200,"data":[]}`) // 引导:仅取 Set-Cookie,无需内容
+		case "/daily":
+			plain := fmt.Sprintf(
+				`{"daily_id":73,"record":[[{"date":"%02d","signed":%v,"bonus":false}]]}`,
+				today, dailySigned)
+			enc, err := encodeRespData([]byte(plain), ts, "")
+			if err != nil {
+				t.Errorf("encodeRespData: %v", err)
+				return
+			}
+			fmt.Fprintf(w, `{"code":200,"data":%q}`, enc)
+		case "/daily_chk":
+			io.WriteString(w, chkBody)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c.http = srv.Client()
+
+	t.Setenv("JM_API_DOMAINS", strings.TrimPrefix(srv.URL, "https://"))
+	domainUpdateOnce.Do(func() {}) // 阻止 ensureInit 真实域名更新外呼;域名池走 env 覆盖
+
+	// ① 静默响应(=失效登录态)+ 复查未签 → 1002(提示重新登录),不误报成功
+	if _, err := SignDo(context.Background(), c, "4295154", 73); err == nil {
+		t.Fatalf("未签上应报错")
+	} else if ae, ok := err.(*APIError); !ok || ae.Code != CodeUnauthorized {
+		t.Fatalf("应为 1002, got %#v", err)
+	}
+
+	// ② 静默响应 + 复查已签(并发签到等)→ 成功,msg 空
+	dailySigned = true
+	res, err := SignDo(context.Background(), c, "4295154", 73)
+	if err != nil {
+		t.Fatalf("复查已签不应报错: %v", err)
+	}
+	if ok, _ := res["ok"].(bool); !ok {
+		t.Fatalf("ok 应为 true: %#v", res)
+	}
+
+	// ③ 响应已含明确成功消息(旧协议)→ 成功且不再依赖复查(此处复查状态为未签)
+	dailySigned = false
+	chkBody = `{"code":200,"data":{"msg":"Jcoin:70 EXP:70","status":"ok"}}`
+	res, err = SignDo(context.Background(), c, "4295154", 73)
+	if err != nil {
+		t.Fatalf("含成功消息不应报错: %v", err)
+	}
+	if msg, _ := res["msg"].(string); !strings.Contains(msg, "70 金币") {
+		t.Fatalf("奖励消息应被美化: %#v", res)
 	}
 }

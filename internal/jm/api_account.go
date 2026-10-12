@@ -416,9 +416,28 @@ func prettifySignMsg(msg string) string {
 	return msg
 }
 
+// signMsgHasResult 上游签到消息是否已给出明确结果(成功/已签关键字,SDK
+// daily_checkin 同款判定:Jcoin/EXP/成功/status=ok/已签到类)。
+func signMsgHasResult(decoded map[string]any) bool {
+	msg := fieldStrOr(decoded, "msg", "")
+	if msg == "" {
+		return false
+	}
+	if fieldStr(decoded, "status") == "ok" {
+		return true
+	}
+	lower := strings.ToLower(msg)
+	return strings.Contains(msg, "成功") || strings.Contains(msg, "已签到") ||
+		strings.Contains(lower, "jcoin") || strings.Contains(lower, "exp")
+}
+
 // SignDo #30 执行签到:POST /daily_chk(表单 user_id+daily_id,对齐桌面端
 // SignDailyReq2);msg 为上游返回信息(缺失/解密失败 → "")。
 // 注意幂等由调用方"先查后签"实现(见 handler #30)。
+//
+// 上游对无效登录态(如 AVS 过期)的签到请求静默返回 {"code":200,"data":[]}:
+// 既无消息也不落账,故无明确结果时复查签到状态,未生效按 1002 上报登录态失效,
+// 避免前端误报「签到成功」。
 func SignDo(ctx context.Context, cl *Client, uid string, dailyID int) (map[string]any, error) {
 	form := url.Values{}
 	form.Set("user_id", uid)
@@ -427,10 +446,19 @@ func SignDo(ctx context.Context, cl *Client, uid string, dailyID int) (map[strin
 	if err != nil {
 		return nil, err
 	}
+	decoded, _ := decodeMap(data)
 	msg := ""
-	if decoded, ok := decodeMap(data); ok {
+	if decoded != nil {
 		if m := fieldStrOr(decoded, "msg", ""); m != "" {
 			msg = prettifySignMsg(m)
+		}
+	}
+	if !signMsgHasResult(decoded) {
+		// 无明确结果 → 复查状态;复查失败(网络抖动)按乐观语义放行,不误杀。
+		if status, serr := SignStatus(ctx, cl, uid); serr == nil {
+			if signed, _ := status["todaySigned"].(bool); !signed {
+				return nil, errUnauthorizedMsg("签到未生效,登录态可能已失效,请重新登录后重试")
+			}
 		}
 	}
 	return map[string]any{"ok": true, "msg": msg}, nil
