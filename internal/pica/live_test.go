@@ -3,8 +3,8 @@ package pica
 // 真实上游端到端测试(默认跳过,需显式开启):
 //
 //	PICA_LIVE_TEST=1 go test ./internal/pica/ -run TestLive -v -timeout 15m
-//	可选:PICA_LIVE_PROXY=http://127.0.0.1:5070(默认直连)、
-//	     PICA_LIVE_EMAIL / PICA_LIVE_PASSWORD(默认 API 文档实测账号)
+//	可选:PICA_LIVE_PROXY=http://127.0.0.1:5070(默认直连)
+//	必填:PICA_LIVE_EMAIL / PICA_LIVE_PASSWORD(缺失即跳过,凭据不入库)
 //
 // 覆盖链路:登录 → 分类 → 周榜 → 搜索 → 详情 → 章节 → 图片列表 → 图片字节。
 // 同时验证假响应检测:登录响应无 data 时必须报错而非静默成功。
@@ -24,12 +24,12 @@ func liveProxy() string {
 	return ""
 }
 
-func liveCreds() (string, string) {
+func liveCreds(t *testing.T) (string, string) {
+	t.Helper()
 	email := os.Getenv("PICA_LIVE_EMAIL")
 	password := os.Getenv("PICA_LIVE_PASSWORD")
-	if email == "" {
-		email = "woainilinxinru"
-		password = "qwe123321"
+	if email == "" || password == "" {
+		t.Skip("需要 PICA_LIVE_EMAIL / PICA_LIVE_PASSWORD 环境变量(凭据不入库)")
 	}
 	return email, password
 }
@@ -51,7 +51,7 @@ func TestLiveSignIn(t *testing.T) {
 	cl := newLiveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	email, password := liveCreds()
+	email, password := liveCreds(t)
 	token, user, err := cl.SignIn(ctx, email, password)
 	if err != nil {
 		t.Fatalf("登录失败: %v (upstream=%s)", err, UpstreamDetail(err))
@@ -78,7 +78,7 @@ func TestLiveContentChain(t *testing.T) {
 	defer cancel()
 
 	// 0) 登录拿 token
-	email, password := liveCreds()
+	email, password := liveCreds(t)
 	token, _, err := cl.SignIn(ctx, email, password)
 	if err != nil {
 		t.Fatalf("登录失败: %v", err)
