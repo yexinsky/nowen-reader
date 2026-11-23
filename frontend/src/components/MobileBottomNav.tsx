@@ -149,9 +149,12 @@ export default function MobileBottomNav() {
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/50 bg-surface/90 backdrop-blur-2xl sm:hidden safe-bottom overflow-hidden">
       <div ref={navRef} className="relative flex h-14 items-center justify-around px-1">
-        {/* 滑动指示器(无聚焦项时宽度收为 0,自然隐藏) */}
+        {/* 滑动指示器(无聚焦项时宽度收为 0,自然隐藏)
+            必须带 left-0:绝对定位元素没有 left/right 时会退回「静态位置」,
+            而父级是 justify-around 的 flex,静态位置在容器正中,
+            会把 translateX 整体偏移 (容器宽-24)/2,导致指示器落在错误的分栏上。 */}
         <div
-          className="nav-indicator absolute top-0 h-[2px] rounded-full bg-gradient-to-r from-accent to-accent-purple shadow-[0_0_8px_var(--color-accent)]"
+          className="nav-indicator absolute left-0 top-0 h-[2px] rounded-full bg-gradient-to-r from-accent to-accent-purple shadow-[0_0_8px_var(--color-accent)]"
           style={{
             transform: `translateX(${indicatorStyle.left}px)`,
             width: `${indicatorStyle.width}px`,
