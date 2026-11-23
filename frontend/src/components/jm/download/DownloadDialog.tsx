@@ -11,8 +11,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Download, HardDrive, Loader2, X } from "lucide-react";
-import { isJmApiError } from "@/lib/jm/client";
+import { AlertTriangle, Check, Download, HardDrive, Loader2, RefreshCw, X } from "lucide-react";
+import { isJmApiError, jmDownloadCheck } from "@/lib/jm/client";
 import { startJmDownload, useJmDownloadCenter } from "@/lib/jm/downloads";
 import type { JmEpisode } from "@/lib/jm/types";
 
@@ -48,6 +48,11 @@ function errText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
+/** 重复下载冲突(409):后端已明确告知会覆盖既有归档。 */
+function isConflict(err: unknown): boolean {
+  return isJmApiError(err) && err.httpStatus === 409;
+}
+
 function formatSize(bytes?: number): string {
   if (!bytes || bytes <= 0) return "";
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
@@ -74,6 +79,8 @@ export function JmDownloadDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ count: number; zipNames: string[] } | null>(null);
+  /** 目标目录已存在同名归档(点「开始下载」前预检得知,或提交时后端 409 告知) */
+  const [conflict, setConflict] = useState<{ name: string; path: string } | null>(null);
   const reqRef = useRef({ cancelled: false });
 
   // 卸载作废在途请求
@@ -96,6 +103,7 @@ export function JmDownloadDialog({
     setError(null);
     setDone(null);
     setBusy(false);
+    setConflict(null);
     setDestDir((prev) => prev || defaultDir?.path || "");
     if (episodeList.length > 0) {
       if (pids && pids.length > 0) setSelected(new Set(pids));
@@ -111,6 +119,26 @@ export function JmDownloadDialog({
     if (defaultDir?.path) setDestDir(defaultDir.path);
   }, [open, destDir, defaultDir?.path]);
 
+  // 预检:当前目录里是否已有该作品的归档(批量模式不预检,交由后端逐个判重)
+  const checkAid = isBatch ? "" : (batch?.[0]?.aid ?? aid ?? "");
+  const checkTitle = isBatch ? "" : (batch?.[0]?.title ?? title ?? "");
+  useEffect(() => {
+    if (!open || isBatch || !destDir) return;
+    let alive = true;
+    setConflict(null);
+    (async () => {
+      try {
+        const result = await jmDownloadCheck({ destDir, aid: checkAid, title: checkTitle });
+        if (alive && result.exists) setConflict({ name: result.name, path: result.path });
+      } catch {
+        // 预检失败不阻断下载(提交时后端仍会兜底判重)
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, isBatch, destDir, checkAid, checkTitle]);
+
   const toggleEpisode = useCallback((pid: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -122,51 +150,65 @@ export function JmDownloadDialog({
 
   const allSelected = episodeList.length > 0 && selected.size === episodeList.length;
 
-  const handleStart = useCallback(async () => {
-    if (busy) return;
-    if (!destDir) {
-      setError("请选择下载目录");
-      return;
-    }
-    const targets: JmDownloadBatchItem[] = isBatch
-      ? batch!
-      : [{ aid: aid ?? "", title: title ?? "", author }];
-    if (!isBatch && !targets[0].aid && selected.size === 0) {
-      setError("缺少可下载的章节");
-      return;
-    }
-    if (!isBatch && episodeList.length > 0 && selected.size === 0) {
-      setError("请至少选择一个章节");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    const created: string[] = [];
-    try {
-      for (const item of targets) {
-        if (reqRef.current.cancelled) return;
-        const task = await startJmDownload({
-          aid: item.aid,
-          title: item.title,
-          author: item.author,
-          pids: isBatch
-            ? undefined
-            : episodeList.length > 0
-              ? episodeList.filter((ep) => selected.has(ep.pid)).map((ep) => ep.pid)
-              : undefined,
-          destDir,
-        });
-        created.push(task.title || task.aid);
+  const handleStart = useCallback(
+    async (overwrite = false) => {
+      if (busy) return;
+      if (!destDir) {
+        setError("请选择下载目录");
+        return;
       }
-      if (reqRef.current.cancelled) return;
-      setDone({ count: created.length, zipNames: created });
-    } catch (err) {
-      if (!reqRef.current.cancelled) setError(errText(err, "创建下载任务失败"));
-    } finally {
-      if (!reqRef.current.cancelled) setBusy(false);
-    }
-  }, [aid, author, batch, busy, destDir, episodeList, isBatch, reqRef, selected, title]);
+      const targets: JmDownloadBatchItem[] = isBatch
+        ? batch!
+        : [{ aid: aid ?? "", title: title ?? "", author }];
+      if (!isBatch && !targets[0].aid && selected.size === 0) {
+        setError("缺少可下载的章节");
+        return;
+      }
+      if (!isBatch && episodeList.length > 0 && selected.size === 0) {
+        setError("请至少选择一个章节");
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      const created: string[] = [];
+      try {
+        for (const item of targets) {
+          if (reqRef.current.cancelled) return;
+          const task = await startJmDownload({
+            aid: item.aid,
+            title: item.title,
+            author: item.author,
+            pids: isBatch
+              ? undefined
+              : episodeList.length > 0
+                ? episodeList.filter((ep) => selected.has(ep.pid)).map((ep) => ep.pid)
+                : undefined,
+            destDir,
+            overwrite,
+          });
+          created.push(task.title || task.aid);
+        }
+        if (reqRef.current.cancelled) return;
+        setDone({ count: created.length, zipNames: created });
+      } catch (err) {
+        if (reqRef.current.cancelled) return;
+        // 409 = 目标目录已有同名归档:转为「覆盖确认」而非普通错误,
+        // 批量模式命中时后端在首个冲突处中止,已创建的任务照常保留。
+        if (isConflict(err) && isJmApiError(err)) {
+          const data = err.data as { path?: unknown } | undefined;
+          const path = typeof data?.path === "string" ? data.path : "";
+          setConflict({ name: path.split(/[\\/]/).pop() || "同名归档", path });
+          setDone(created.length > 0 ? { count: created.length, zipNames: created } : null);
+        } else {
+          setError(errText(err, "创建下载任务失败"));
+        }
+      } finally {
+        if (!reqRef.current.cancelled) setBusy(false);
+      }
+    },
+    [aid, author, batch, busy, destDir, episodeList, isBatch, reqRef, selected, title]
+  );
 
   if (!open) return null;
 
@@ -234,9 +276,24 @@ export function JmDownloadDialog({
                   ))}
                 </select>
                 <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-                  目录来自「设置 · 书库管理」;打包完成后自动清理下载临时文件夹,
-                  同名 zip 不会覆盖已有文件。
+                  目录来自「设置 · 书库管理」;打包完成后自动清理下载临时文件夹。
+                  同一作品固定存为「标题.zip」,重复下载只保留一份,不再生成「标题 (2).zip」副本。
                 </p>
+
+                {/* 重复下载提示(预检命中 或 提交时后端 409) */}
+                {conflict && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium text-amber-500">
+                        该目录已有「{conflict.name}」
+                      </p>
+                      <p className="mt-0.5 break-all text-[11px] leading-relaxed text-muted">
+                        继续下载会覆盖书库里的这一份(页数/大小随新文件刷新),不会新增重复条目。
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 章节选择(单作模式且已知章节清单) */}
@@ -352,12 +409,26 @@ export function JmDownloadDialog({
               </button>
               <button
                 type="button"
-                onClick={handleStart}
+                onClick={() => handleStart(!!conflict)}
                 disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
+                  conflict ? "bg-amber-500" : "bg-accent"
+                }`}
               >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                {isBatch ? `开始下载 ${batch!.length} 部` : "开始下载"}
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : conflict ? (
+                  <RefreshCw className="h-4 w-4" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                {conflict
+                  ? isBatch
+                    ? `覆盖并下载 ${batch!.length} 部`
+                    : "覆盖并下载"
+                  : isBatch
+                    ? `开始下载 ${batch!.length} 部`
+                    : "开始下载"}
               </button>
             </>
           )}

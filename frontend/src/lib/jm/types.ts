@@ -305,6 +305,18 @@ export interface JmDownloadStartParams {
   /** 指定章节;缺省 = 全部章节 */
   pids?: string[];
   destDir: string;
+  /** 目标目录已存在同名归档时,确认覆盖(缺省 false → 后端返回 409) */
+  overwrite?: boolean;
+}
+
+/** 重复下载预检结果(GET /downloads/check)。 */
+export interface JmDownloadCheck {
+  /** 归档绝对路径 */
+  path: string;
+  /** 归档文件名(含扩展名) */
+  name: string;
+  /** 是否已存在(存在即会被覆盖) */
+  exists: boolean;
 }
 
 /* ── 错误码(§0.3) ── */

@@ -115,6 +115,7 @@ export async function startPicaDownload(params: {
   author?: string;
   orders?: number[];
   destDir: string;
+  overwrite?: boolean;
 }): Promise<PicaDownloadTask> {
   const task = await picaDownloadStart(params);
   await refreshTasks();

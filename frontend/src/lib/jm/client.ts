@@ -38,6 +38,7 @@ import {
   type JmDownloadDir,
   type JmDownloadTask,
   type JmDownloadStartParams,
+  type JmDownloadCheck,
   type JmTagFavorite,
   type JmTagFavoriteType,
   type JmBackfillCandidate,
@@ -152,9 +153,20 @@ async function jmRequest<T>(path: string, options: JmRequestOptions = {}): Promi
     });
   }
 
-  // 422:参数校验失败(FastAPI 默认结构,非包装体)
-  if (res.status === 422) {
-    throw new JmApiError(422, "请求参数不合法", { httpStatus: 422 });
+  // 422/409:参数校验失败或重复下载冲突(FastAPI 风格 {"detail": ...},非包装体)。
+  // detail 必须透传:下载目录不在候选、已存在同名归档等提示只有后端知道具体原因。
+  if (res.status === 422 || res.status === 409) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      // 非 JSON 响应体走默认文案
+    }
+    throw new JmApiError(422, detail || (res.status === 409 ? "目标目录已存在同名归档" : "请求参数不合法"), {
+      httpStatus: res.status,
+      data: { conflict: res.status === 409 },
+    });
   }
 
   let envelope: JmEnvelope<T>;
@@ -360,6 +372,20 @@ export function jmDownloadDirs(): Promise<{ dirs: JmDownloadDir[]; testDir: stri
 /** 任务列表(新→旧,含已结束任务) */
 export function jmDownloadTasks(): Promise<{ list: JmDownloadTask[]; tempRoot: string }> {
   return jmRequest<{ list: JmDownloadTask[]; tempRoot: string }>("/api/downloads");
+}
+
+/**
+ * 重复下载预检:在目标目录中按「标题.zip」定位归档,返回是否已存在。
+ * 打开下载对话框与切换目录时调用,命中即提示「将覆盖书库中的这一份」。
+ */
+export function jmDownloadCheck(params: {
+  destDir: string;
+  title?: string;
+  aid?: string;
+}): Promise<JmDownloadCheck> {
+  return jmRequest<JmDownloadCheck>("/api/downloads/check", {
+    query: { destDir: params.destDir, title: params.title, aid: params.aid },
+  });
 }
 
 /** 新建下载任务(异步执行,返回任务快照供轮询进度) */

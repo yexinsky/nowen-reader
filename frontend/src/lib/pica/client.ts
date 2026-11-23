@@ -134,8 +134,19 @@ async function picaRequest<T>(path: string, options: PicaRequestOptions = {}): P
     throw new PicaApiError(1401, "站点登录已失效,请刷新页面重新登录站点", { httpStatus: 401 });
   }
 
-  if (res.status === 422) {
-    throw new PicaApiError(422, "请求参数不合法", { httpStatus: 422 });
+  // 422/409:参数校验失败或重复下载冲突,detail 透传后端具体原因
+  if (res.status === 422 || res.status === 409) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      // 非 JSON 响应体走默认文案
+    }
+    throw new PicaApiError(422, detail || (res.status === 409 ? "目标目录已存在同名归档" : "请求参数不合法"), {
+      httpStatus: res.status,
+      data: { conflict: res.status === 409 },
+    });
   }
 
   let envelope: PicaEnvelope<T>;
@@ -314,12 +325,25 @@ export function picaDownloadList(): Promise<{ list: PicaDownloadTask[]; tempRoot
   return picaRequest("/api/downloads");
 }
 
+/** 重复下载预检:在目标目录中按「标题.zip」定位归档,返回是否已存在。 */
+export function picaDownloadCheck(params: {
+  destDir: string;
+  title?: string;
+  bookId?: string;
+}): Promise<{ path: string; name: string; exists: boolean }> {
+  return picaRequest("/api/downloads/check", {
+    query: { destDir: params.destDir, title: params.title, bookId: params.bookId },
+  });
+}
+
 export function picaDownloadStart(params: {
   bookId: string;
   title?: string;
   author?: string;
   orders?: number[];
   destDir: string;
+  /** 目标目录已存在同名归档时,确认覆盖(缺省 false → 后端返回 409) */
+  overwrite?: boolean;
 }): Promise<PicaDownloadTask> {
   return picaRequest("/api/downloads", { method: "POST", body: params });
 }
