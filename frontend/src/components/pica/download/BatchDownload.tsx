@@ -16,6 +16,7 @@ import {
   PicaDownloadDialog,
   type PicaDownloadBatchItem,
 } from "@/components/pica/download/DownloadDialog";
+import { BatchActionBar, BatchActionBarSpacer } from "@/components/BatchActionBar";
 
 interface BatchSelectionValue {
   selectMode: boolean;
@@ -85,56 +86,61 @@ export function PicaBatchSelectionProvider({
 
   return (
     <BatchSelectionContext.Provider value={value}>
-      {comics.length > 0 && (
+      {/* 未进入多选:列表顶部一个紧凑入口 */}
+      {comics.length > 0 && !selectMode && (
         <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-          {!selectMode ? (
-            <button
-              type="button"
-              onClick={() => setSelectMode(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-            >
-              <CheckSquare className="h-3.5 w-3.5" />
-              {hint}
-            </button>
-          ) : (
-            <>
-              <span className="mr-auto text-xs text-muted">
-                已选 <span className="font-medium text-accent">{selected.size}</span> / {comics.length} 部
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  setSelected(allSelected ? new Set() : new Set(comics.map((c) => c.id)))
-                }
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-              >
-                {allSelected ? <Square className="h-3.5 w-3.5" /> : <CheckSquare className="h-3.5 w-3.5" />}
-                {allSelected ? "全不选" : "全选本页"}
-              </button>
-              <button
-                type="button"
-                disabled={selected.size === 0}
-                onClick={() => setDialogOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Download className="h-3.5 w-3.5" />
-                批量下载({selected.size})
-              </button>
-              <button
-                type="button"
-                onClick={exitSelectMode}
-                aria-label="退出多选"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-foreground"
-              >
-                <X className="h-3.5 w-3.5" />
-                退出
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={() => setSelectMode(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+          >
+            <CheckSquare className="h-3.5 w-3.5" />
+            {hint}
+          </button>
         </div>
       )}
 
       {children}
+
+      {/* 已进入多选:操作条悬浮在视口底部,列表滚多远都点得到「批量下载」 */}
+      {selectMode && (
+        <>
+          <BatchActionBarSpacer />
+          <BatchActionBar>
+            <span className="mr-auto text-xs text-muted">
+              已选 <span className="font-medium text-accent">{selected.size}</span> / {comics.length} 部
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setSelected(allSelected ? new Set() : new Set(comics.map((c) => c.id)))
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+            >
+              {allSelected ? <Square className="h-3.5 w-3.5" /> : <CheckSquare className="h-3.5 w-3.5" />}
+              {allSelected ? "全不选" : "全选本页"}
+            </button>
+            <button
+              type="button"
+              disabled={selected.size === 0}
+              onClick={() => setDialogOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              批量下载({selected.size})
+            </button>
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              aria-label="退出多选"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+              退出
+            </button>
+          </BatchActionBar>
+        </>
+      )}
 
       <PicaDownloadDialog
         open={dialogOpen}
