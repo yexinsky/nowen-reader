@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Link from "next/link";
-import { AlertTriangle, Compass, Loader2, RotateCcw, Search, Tag, User, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, Compass, Loader2, RotateCcw, Search, Tag, User, X } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { useToast } from "@/components/Toast";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
@@ -534,7 +534,8 @@ function SearchContent() {
 const SELECT_CLASS =
   "h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none transition-colors focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50";
 
-/** 我的标签 chips 行:点击 chip 即按该标签搜索,× 就地取消收藏;「管理」进标签收藏页 */
+/** 我的标签 chips 行:点击 chip 即按该标签搜索,× 就地取消收藏;「管理」进标签收藏页
+ *  默认只占一行(可横滑),收藏多到 38 个时不会把搜索框挤出首屏 */
 function SavedTagsRow({
   tags,
   onSearch,
@@ -544,15 +545,25 @@ function SavedTagsRow({
   onSearch: (it: Pick<JmTagFavorite, "type" | "tag">) => void;
   onRemove: (it: Pick<JmTagFavorite, "type" | "tag">) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const tagItems = tags.filter((it) => it.type === "tag");
   const authorItems = tags.filter((it) => it.type === "author");
   return (
     <div className="mb-3 rounded-xl border border-border bg-card px-3.5 py-2.5">
       <div className="flex items-center gap-2">
-        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
+          title={expanded ? "收起收藏" : "展开全部收藏"}
+        >
           <Tag className="h-3.5 w-3.5" />
           我的收藏
-        </span>
+          <span className="text-[11px] text-muted/70">{tags.length}</span>
+          <ChevronDown
+            className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        </button>
         <Link
           href="/jm/tags"
           className="ml-auto shrink-0 text-[11px] text-accent transition-opacity hover:opacity-80"
@@ -560,11 +571,17 @@ function SavedTagsRow({
           管理
         </Link>
       </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
+      <div
+        className={
+          expanded
+            ? "mt-2 flex flex-wrap gap-1.5"
+            : "mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        }
+      >
         {tagItems.map(({ tag, type }) => (
           <span
             key={`${type}\u0000${tag}`}
-            className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
           >
             <button
               type="button"
@@ -587,7 +604,7 @@ function SavedTagsRow({
         {authorItems.map(({ tag, type }) => (
           <span
             key={`${type}\u0000${tag}`}
-            className="inline-flex items-center gap-0.5 rounded-full border border-violet-400/40 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-400/40 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
           >
             <button
               type="button"
