@@ -11,8 +11,11 @@ package jm
 // 章节目录为「第NN话[_标题]」,页面文件为 NNNN.jpg(4 位零填充,阅读顺序)。
 //
 // 安全边界:所有中间产物只写在 <DataDir>/jm/download-tmp/<taskID> 自有沙箱内,
-// 结束(成功/失败/取消)一律整体删除;归档只在调用方给定的白名单目录内新建文件,
-// 同名时递增后缀,绝不覆盖或删除目标目录中的既有文件。
+// 结束(成功/失败/取消)一律整体删除;归档只在调用方给定的白名单目录内写入。
+//
+// 归档口径:同一作品固定落到「标题.zip」。重复下载同一本时原子替换该文件
+// (先写同目录临时名再 rename),书库按 relativePath 定位到同一条记录,不会
+// 产生「标题 (2).zip」这类副本;是否允许覆盖由 HTTP 层预检后显式确认。
 
 import (
 	"archive/zip"
@@ -30,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nowen-reader/nowen-reader/internal/dlarchive"
 	"github.com/nowen-reader/nowen-reader/internal/namesafe"
 )
 
@@ -45,6 +49,12 @@ func SafeName(name, fallback string) string { return namesafe.SafeName(name, fal
 
 func fitPathName(dir, name string, reserveBytes int) string {
 	return namesafe.FitPathName(dir, name, reserveBytes)
+}
+
+// ArchiveName 归档基名(不含扩展名):标题为空时退化为 JM<aid>。
+// HTTP 层的重复下载预检与 run() 的实际落盘共用此口径,保证两边算出的文件名一致。
+func ArchiveName(destDir, title, aid string) string {
+	return fitPathName(destDir, SafeName(title, "JM"+aid), len(dlarchive.Ext)+8)
 }
 
 /* ── 任务模型 ── */
@@ -504,11 +514,11 @@ func (m *DownloadManager) run(t *DownloadTask, pids []string) {
 	m.mu.Lock()
 	title := t.Title
 	m.mu.Unlock()
-	// zip 名 = 漫画标题(默认命名口径,与 JMComic-qt SaveNameType.Default 一致)
-	zipBase := SafeName(title, "JM"+t.Aid)
-	zipBase = fitPathName(t.DestDir, zipBase, len(".zip")+8)
-	finalPath := uniquePath(t.DestDir, zipBase, ".zip")
-	if err := moveFile(zipLocal, finalPath); err != nil {
+	// zip 名 = 漫画标题(默认命名口径,与 JMComic-qt SaveNameType.Default 一致)。
+	// 同名文件一律覆盖:重复下载同一本只保留一份,书库记录随之刷新页数/大小。
+	zipBase := ArchiveName(t.DestDir, title, t.Aid)
+	finalPath := dlarchive.Zip(t.DestDir, zipBase)
+	if err := dlarchive.Replace(zipLocal, finalPath); err != nil {
 		m.finish(t.ID, DownloadFailed, "归档失败:"+err.Error())
 		return
 	}
@@ -900,48 +910,15 @@ func packZip(ctx context.Context, srcDir, zipPath string) (int64, error) {
 	return stat.Size(), nil
 }
 
-// uniquePath 目标目录内不重名路径:同名追加 " (2)"…" (99)",极端情况退化为时间戳。
+// uniquePath 归档目标路径(同名覆盖,由 internal/dlarchive 统一口径)。
 func uniquePath(dir, base, ext string) string {
-	candidate := filepath.Join(dir, base+ext)
-	if _, err := os.Stat(candidate); os.IsNotExist(err) {
-		return candidate
+	if ext != dlarchive.Ext {
+		return filepath.Join(dir, base+ext)
 	}
-	for i := 2; i <= 99; i++ {
-		candidate = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
-		}
-	}
-	return filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, time.Now().Unix(), ext))
+	return dlarchive.Zip(dir, base)
 }
 
-// moveFile 优先 rename(同盘瞬时);跨盘失败时退化为拷贝后删除源文件。
+// moveFile 归档落盘(原子替换同名文件,由 internal/dlarchive 统一口径)。
 func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(dst)
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		out.Close()
-		os.Remove(dst)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(dst)
-		return err
-	}
-	return os.Remove(src)
+	return dlarchive.Replace(src, dst)
 }

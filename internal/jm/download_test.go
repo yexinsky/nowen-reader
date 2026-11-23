@@ -130,7 +130,7 @@ func TestFitPathName(t *testing.T) {
 	}
 }
 
-// TestUniquePath 同名 zip 递增后缀,绝不覆盖。
+// TestUniquePath 同名 zip 覆盖同一路径(重复下载只保留一份)。
 func TestUniquePath(t *testing.T) {
 	dir := t.TempDir()
 	first := uniquePath(dir, "标题", ".zip")
@@ -141,15 +141,12 @@ func TestUniquePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := uniquePath(dir, "标题", ".zip")
-	if filepath.Base(second) != "标题 (2).zip" {
-		t.Fatalf("第二个路径 = %q", second)
-	}
-	if err := os.WriteFile(second, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
+	if second != first {
+		t.Fatalf("重复下载应复用同一路径: %q != %q", second, first)
 	}
 	third := uniquePath(dir, "标题", ".zip")
-	if filepath.Base(third) != "标题 (3).zip" {
-		t.Fatalf("第三个路径 = %q", third)
+	if third != first {
+		t.Fatalf("重复下载应复用同一路径: %q != %q", third, first)
 	}
 }
 
