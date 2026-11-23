@@ -360,6 +360,32 @@ html.light .tag-default { background: rgba(113, 113, 122, 0.1); color: #52525b; 
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/*
+ * Bottom sheet 定位与限高
+ * 移动浏览器的 vh 取的是「大视口」(地址栏收起时)的高度,地址栏展开后实际
+ * 可视区更矮 —— 用 vh 限高 + 底部对齐,抽屉就会被顶出屏幕,底部按钮随之消失。
+ * 这里让遮罩层高度跟随可视区(dvh),卡片限高按容器百分比算,双保险。
+ */
+.sheet-layer {
+  height: 100vh;
+  height: 100dvh;
+  /* iOS 地址栏遮挡时把层往上抬一点,保证底边始终可见 */
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.sheet-max-h {
+  max-height: 100%;
+}
+
+@media (min-width: 640px) {
+  .sheet-layer {
+    height: auto;
+  }
+  .sheet-max-h {
+    max-height: min(85vh, 46rem);
+  }
+}
+
 /* Mobile specific improvements */
 @media (max-width: 640px) {
   /* Ensure modals respect small screens */

@@ -9,10 +9,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Download, HardDrive, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Check, Download, HardDrive, Loader2, RefreshCw } from "lucide-react";
 import { isPicaApiError, picaDownloadCheck } from "@/lib/pica/client";
 import { startPicaDownload, usePicaDownloadCenter } from "@/lib/pica/downloads";
 import type { PicaEpisode } from "@/lib/pica/types";
+import {
+  SheetBody,
+  SheetFooter,
+  SheetHeader,
+  SheetOverlay,
+  sheetCardClass,
+} from "@/components/Sheet";
 
 export interface PicaDownloadBatchItem {
   bookId: string;
@@ -206,30 +213,11 @@ export function PicaDownloadDialog({
     : `下载${title ? `《${title}》` : "漫画"}`;
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 backdrop-blur-[2px] sm:items-center"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 头部 */}
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-          <h3 className="min-w-0 truncate text-sm font-semibold text-foreground" title={dialogTitle}>
-            {dialogTitle}
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-background hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <SheetOverlay onClose={onClose}>
+      <div className={sheetCardClass} onClick={(e) => e.stopPropagation()}>
+        <SheetHeader title={dialogTitle} onClose={onClose} />
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <SheetBody className="px-4 py-4">
           {done ? (
             <div className="py-6 text-center">
               <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
@@ -360,10 +348,10 @@ export function PicaDownloadDialog({
               )}
             </>
           )}
-        </div>
+        </SheetBody>
 
-        {/* 底部操作 */}
-        <div className="flex items-center justify-end gap-2 border-t border-border/60 px-4 py-3">
+        {/* 底部操作(固定在卡片底部,内容再长也不会被顶出可视区) */}
+        <SheetFooter>
           {done ? (
             <>
               <button
@@ -419,8 +407,8 @@ export function PicaDownloadDialog({
               </button>
             </>
           )}
-        </div>
+        </SheetFooter>
       </div>
-    </div>
+    </SheetOverlay>
   );
 }

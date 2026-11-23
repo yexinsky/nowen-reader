@@ -18,7 +18,6 @@ import {
   Loader2,
   Tag,
   Trash2,
-  X,
   XCircle,
 } from "lucide-react";
 import { cancelPicaDownload, removePicaDownload, usePicaDownloadCenter } from "@/lib/pica/downloads";
@@ -27,6 +26,7 @@ import {
   PicaDownloadDialog,
   type PicaDownloadBatchItem,
 } from "@/components/pica/download/DownloadDialog";
+import { SheetBody, SheetHeader, SheetOverlay, sheetCardClass } from "@/components/Sheet";
 
 const STATUS_TEXT: Record<string, string> = {
   queued: "排队中",
@@ -212,31 +212,24 @@ export function PicaDownloadTasksPanel({ open, onClose }: { open: boolean; onClo
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 backdrop-blur-[2px] sm:items-center"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Download className="h-4 w-4 text-accent" />
-            下载任务
-            {activeCount > 0 && <span className="text-xs font-normal text-muted">{activeCount} 进行中</span>}
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-background hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <SheetOverlay onClose={onClose}>
+      <div className={sheetCardClass} onClick={(e) => e.stopPropagation()}>
+        <SheetHeader
+          title={
+            <>
+              <Download className="h-4 w-4 shrink-0 text-accent" />
+              下载任务
+            </>
+          }
+          extra={
+            activeCount > 0 ? (
+              <span className="shrink-0 text-xs font-normal text-muted">{activeCount} 进行中</span>
+            ) : null
+          }
+          onClose={onClose}
+        />
 
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
+        <SheetBody className="space-y-2 px-4 py-3">
           {sorted.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted">暂无下载任务</p>
           ) : (
@@ -249,9 +242,9 @@ export function PicaDownloadTasksPanel({ open, onClose }: { open: boolean; onClo
               />
             ))
           )}
-        </div>
+        </SheetBody>
       </div>
-    </div>
+    </SheetOverlay>
   );
 }
 
