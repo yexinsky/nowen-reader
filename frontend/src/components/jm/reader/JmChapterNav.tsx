@@ -28,9 +28,18 @@ interface JmChapterNavProps {
   nextPid: string | null;
   /** 章节切换回调(由页面壳执行 replace 导航) */
   onNavigate: (pid: string) => void;
+  /** 工具栏可见时把浮动入口上移,避免压在工具栏底栏/翻页热区上 */
+  raised?: boolean;
 }
 
-export function JmChapterNav({ currentPid, aid, hasNext, nextPid, onNavigate }: JmChapterNavProps) {
+export function JmChapterNav({
+  currentPid,
+  aid,
+  hasNext,
+  nextPid,
+  onNavigate,
+  raised = false,
+}: JmChapterNavProps) {
   const { theme } = useTheme();
   const light = theme === "light";
   const [open, setOpen] = useState(false);
@@ -101,7 +110,9 @@ export function JmChapterNav({ currentPid, aid, hasNext, nextPid, onNavigate }: 
           e.stopPropagation();
           openSheet();
         }}
-        className={`fixed bottom-5 right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-transform active:scale-95 ${
+        className={`fixed right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-transform active:scale-95 ${
+          raised ? "bottom-24" : "bottom-5"
+        } ${
           light
             ? "border-black/[0.06] bg-white/85 text-gray-700 shadow-black/10"
             : "border-white/[0.08] bg-zinc-900/85 text-white/80 shadow-black/40"

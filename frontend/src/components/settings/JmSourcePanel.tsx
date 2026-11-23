@@ -4,7 +4,7 @@
  * 设置 · 在线漫画源面板(PRD docs/PRD_JM_SOURCE.md M1)
  *
  * 在线源已内置(同源 /api/jm),无「服务地址」配置项。
- * 区块:账号 / 内置服务状态 / 代理设置 / 图片画质 / 漫画下载 / 维护
+ * 区块:账号 / 内置服务状态 / 代理设置 / 图片画质 / 阅读 / 漫画下载 / 维护
  * 签到入口只保留在在线漫画首页(/jm),设置页不再重复展示
  * 接口:MOBILE_API.md #1 health、#5 logout、#26 clearHistory、#27/#28 settings
  * 资源约束:health 仅在面板挂载与手动「重新检测」时探测,不做轮询。
@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  BookOpen,
   Crown,
   Download,
   Gauge,
@@ -239,6 +240,22 @@ export function JmSourcePanel() {
       toast.error(errText(err, "自动标签设置保存失败"));
     } finally {
       setSavingDownloadTags(false);
+    }
+  };
+
+  /* ── 阅读:进章节是否从第 1 页开始(忽略续读页) ── */
+  const [savingStartFromFirstPage, setSavingStartFromFirstPage] = useState(false);
+
+  const changeStartFromFirstPage = async (on: boolean) => {
+    setSavingStartFromFirstPage(true);
+    try {
+      const next = await jmPutSettings({ startFromFirstPage: on });
+      setSettings(next);
+      toast.success(on ? "已开启:每次进章节都从第 1 页开始" : "已关闭:进章节自动续读到上次位置");
+    } catch (err) {
+      toast.error(errText(err, "阅读起始页设置保存失败"));
+    } finally {
+      setSavingStartFromFirstPage(false);
     }
   };
 
@@ -501,7 +518,47 @@ export function JmSourcePanel() {
         )}
       </section>
 
-      {/* ── 4 下载 ── */}
+      {/* ── 4 阅读 ── */}
+      <section className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="flex items-center gap-2.5 border-b border-border/50 px-5 py-3.5">
+          <BookOpen className="h-4 w-4 shrink-0 text-accent" />
+          <h3 className="text-sm font-semibold text-foreground">阅读</h3>
+        </div>
+        {settingsPending ? (
+          settingsPending
+        ) : (
+          <div className="p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">进章节从第 1 页开始</div>
+                <p className="mt-0.5 text-xs text-muted">
+                  开启后每次打开章节都从第 1 页开始,忽略上次读到哪;
+                  关闭时自动续读到上次位置(历史记录/继续阅读入口始终按记录定位)。
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="进章节从第 1 页开始"
+                aria-checked={settings?.startFromFirstPage ?? false}
+                disabled={savingStartFromFirstPage || !!settingsPending}
+                onClick={() => void changeStartFromFirstPage(!(settings?.startFromFirstPage ?? false))}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
+                  (settings?.startFromFirstPage ?? false) ? "bg-accent" : "bg-muted/40"
+                }`}
+              >
+                <span
+                  className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                    (settings?.startFromFirstPage ?? false) ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── 5 下载 ── */}
       <section className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="flex items-center gap-2.5 border-b border-border/50 px-5 py-3.5">
           <Download className="h-4 w-4 shrink-0 text-accent" />
@@ -583,7 +640,7 @@ export function JmSourcePanel() {
         </div>
       </section>
 
-      {/* ── 5 维护 ── */}
+      {/* ── 6 维护 ── */}
       <section className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="flex items-center gap-2.5 border-b border-border/50 px-5 py-3.5">
           <ShieldCheck className="h-4 w-4 shrink-0 text-accent" />

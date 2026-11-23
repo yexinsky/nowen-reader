@@ -275,33 +275,12 @@ export default function SinglePageView({
       return;
     }
 
-    // 轻触（非滑动）- 区域翻页或显示工具栏
+    // 轻触（非滑动）:交给后面合成的 click 处理
+    // 不能在 touch 阶段直接翻页 —— 否则双击的第一下就已经翻页了,
+    // 双击缩放与区域翻页会互相打架(实际表现是「双击翻了两页」)。
+    // handleClick 里有 250ms 延迟 + 双击判定,是唯一的速度裁判。
     if (absDx < 10 && absDy < 10 && elapsed < 300) {
-      // 标记touch已处理，防止后续合成click事件重复翻页
-      touchHandledRef.current = true;
-      setTimeout(() => { touchHandledRef.current = false; }, 400);
-
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      const ratio = (start.x - rect.left) / rect.width;
-      if (ratio > 0.3 && ratio < 0.7) {
-        onTapCenter();
-      } else if (ratio <= 0.3) {
-        if (direction === "ltr") {
-          if (currentPage <= 0) onBoundaryReached?.("prev");
-          else goToPage(currentPage - 1, "right");
-        } else {
-          if (currentPage >= pages.length - 1) onBoundaryReached?.("next");
-          else goToPage(currentPage + 1, "left");
-        }
-      } else {
-        if (direction === "ltr") {
-          if (currentPage >= pages.length - 1) onBoundaryReached?.("next");
-          else goToPage(currentPage + 1, "left");
-        } else {
-          if (currentPage <= 0) onBoundaryReached?.("prev");
-          else goToPage(currentPage - 1, "right");
-        }
-      }
+      return;
     }
   }, [direction, currentPage, pages.length, goToPage, onTapCenter, scale, onBoundaryReached, clampTranslate]);
 
@@ -468,6 +447,9 @@ export default function SinglePageView({
               imageLoaded ? "opacity-100" : "opacity-0"
             }`}
             onLoad={() => {
+              // 外层 AOP 兜底会用 cache-bust 直接改 src 重试(不经 React 状态);
+              // 重试成功后必须清掉 error,否则遮罩会一直盖在已经加载好的图上
+              setImageError(false);
               setImageLoaded(true);
               requestAnimationFrame(() => {
                 setTranslate((prev) => clampTranslate(prev, scale));

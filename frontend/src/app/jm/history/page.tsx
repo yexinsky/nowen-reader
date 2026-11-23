@@ -15,9 +15,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, History, ImageOff, Loader2, Trash2 } from "lucide-react";
+import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
+import { JmCover } from "@/components/jm/LetterCover";
 import { useToast } from "@/components/Toast";
 import { isNSFW } from "@/lib/nsfw";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
@@ -270,20 +271,9 @@ function HistoryRow({
       to={`/jm/reader/${item.pid}?page=${item.imageIndex}&aid=${item.aid}`}
       className="group flex items-center gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:border-accent/40 hover:bg-card-hover"
     >
-      {/* 封面缩略图 */}
+      {/* 封面缩略图(无封面/加载失败 → 标题首字字母封面,避免整屏「裂图」观感) */}
       <div className="aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-md bg-muted/10 sm:w-[72px]">
-        {coverUrl ? (
-          <img
-            src={coverUrl}
-            alt={item.title}
-            loading="lazy"
-            className={`h-full w-full object-cover ${shouldBlur ? "select-none blur-lg" : ""}`}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted/30">
-            <ImageOff className="h-5 w-5" />
-          </div>
-        )}
+        <JmCover src={coverUrl} title={item.title} blurred={shouldBlur} />
       </div>
 
       <div className="min-w-0 flex-1">

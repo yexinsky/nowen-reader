@@ -10,10 +10,11 @@
  */
 
 import Link from "next/link";
-import { Check, Eye, Heart, ImageOff, Images } from "lucide-react";
+import { Check, Eye, Heart, Images } from "lucide-react";
 import { isNSFW } from "@/lib/nsfw";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { resolveJmUrl } from "@/lib/jm/config";
+import { JmCover } from "@/components/jm/LetterCover";
 import { useJmBatchSelection } from "@/components/jm/download/BatchDownload";
 import type { JmComicItem } from "@/lib/jm/types";
 
@@ -57,20 +58,13 @@ export function JmComicCard({ comic }: { comic: JmComicItem }) {
         }}
       >
         <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-muted/10">
-          {coverUrl ? (
-            <img
-              src={coverUrl}
-              alt={comic.title}
-              loading="lazy"
-              className={`h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 ${
-                shouldBlur ? "select-none blur-lg" : ""
-              }`}
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-muted/30">
-              <ImageOff className="h-8 w-8" />
-            </div>
-          )}
+          {/* 无封面/加载失败 → 标题首字字母封面;按下时轻微回弹,给触屏一点反馈 */}
+          <JmCover
+            src={coverUrl}
+            title={comic.title}
+            blurred={shouldBlur}
+            className="transition-transform duration-300 group-hover:scale-105 group-active:scale-[0.98]"
+          />
           {selecting && (
             <span
               className={`absolute left-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md border shadow-sm ${

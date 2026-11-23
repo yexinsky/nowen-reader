@@ -10,11 +10,16 @@
  * JM 特化逻辑,不修改任何现有阅读器文件:
  * - #15 拉取章节图片清单,逐张经 jmImageUrl(#16,服务端乱序还原)拼代理 URL;
  *   live 模式 images[].width/height 恒 0,不参与布局,占位比例由视图组件内置
- * - #25 进度上报(幂等键 aid+pid,imageIndex 1 基):①进入章节成功立即上报一次;
- *   ②页码变化防抖 1200ms 合并上报;③离开章节/卸载时若有未上报的最新页码,
- *   fire-and-forget 补报;progressTracking 关闭或未登录时一律不上报
+ * - #25 进度上报(幂等键 aid+pid,imageIndex 1 基):①页码变化防抖 1200ms 合并上报;
+ *   ②离开章节/卸载时若有未上报的最新页码,fire-and-forget 补报;
+ *   progressTracking 关闭或未登录时一律不上报。
+ *   进入章节只「读取」已有进度作为起点,不再立刻上报覆盖(否则没翻页也会把
+ *   服务端记录改写成起始页);上报字段口径:imageIndex=页码、epTitle=章节名、
+ *   title/coverUrl=作品级元信息(取自详情,缺失则省略,由服务端「空值不覆盖」兜底)
+ * - 起始页优先级:显式 ?page=N → 设置 startFromFirstPage(开则恒为第 1 页) →
+ *   服务端历史中本章节的续读页 → 第 1 页
  * - 章节衔接:onBoundaryReached("next") 且 hasNext/nextPid 时 replace 进入下一章;
- *   "prev" 越界不做
+ *   已是最后一章时给 toast 收尾提示(不再静默无反应)
  * - AOP 增强(全部在本页面壳层实现,零改动现有阅读器组件):
  *   ① <JmChapterNav/> 以兄弟覆盖层提供章节清单入口(装饰器,见组件头注释);
  *   ② 阅读容器 onErrorCapture 捕获视图内部 <img> 加载失败,自动加 cache-bust
@@ -37,10 +42,12 @@ import ReaderOptionsPanel from "@/components/reader/ReaderOptionsPanel";
 import { useReaderOptions } from "@/hooks/useReaderOptions";
 import { useTheme } from "@/lib/theme-context";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
+import { useToast } from "@/components/Toast";
 import { JmChapterNav } from "@/components/jm/reader/JmChapterNav";
 import { JmDownloadFab } from "@/components/jm/download/DownloadTasks";
 import { isJmApiError, jmPhotos, jmReportHistory } from "@/lib/jm/client";
 import { jmImageUrl } from "@/lib/jm/config";
+import { loadJmAlbumMeta, resolveJmStartPage } from "@/lib/jm/reading";
 import { useJmSession } from "@/lib/jm/session";
 import { JM_ERROR_CODES, type JmPhotos } from "@/lib/jm/types";
 import type { ComicReadingMode, ReadingDirection } from "@/types/reader";
@@ -123,6 +130,7 @@ export default function JmReaderPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isLoggedIn } = useJmSession();
+  const toast = useToast();
   const aidParam = searchParams.get("aid") ?? "";
 
   // 阅读偏好(与本地阅读器共享同一份 localStorage 偏好 —— 「体验沿用」落点)
@@ -158,23 +166,35 @@ export default function JmReaderPage() {
     loggedInRef.current = isLoggedIn;
   }, [isLoggedIn]);
 
-  /** 立即上报进度(#25,幂等键 aid+pid);进度跟踪关闭或未登录时静默跳过 */
+  /**
+   * 立即上报进度(#25,幂等键 aid+pid);进度跟踪关闭或未登录时静默跳过。
+   *
+   * 字段口径:imageIndex=看到第几页;epTitle=章节名(#15 的 title 就是章节名);
+   * title/coverUrl 是**作品级**元信息,取自详情,拿不到就不传(服务端「空值不覆盖」
+   * 会沿用已存值)。绝不用章节名当作品名、也不用空串当封面 —— 那会把历史列表
+   * 里已存的标题和封面覆盖成空/错值。
+   */
   const reportProgress = useCallback((page: number) => {
     const p = photosRef.current;
     if (!p || !progressTrackingRef.current || !loggedInRef.current) return;
     lastReportedPageRef.current = page;
     pendingPageRef.current = null;
-    void jmReportHistory({
-      aid: p.aid,
-      title: p.title,
-      coverUrl: "",
-      pid: p.pid,
-      epTitle: p.title,
-      imageIndex: page,
-    }).catch(() => {});
+    const aid = p.aid;
+    const epTitle = p.title;
+    void loadJmAlbumMeta(aid).then((meta) => {
+      void jmReportHistory({
+        aid,
+        pid: p.pid,
+        imageIndex: page,
+        ...(epTitle ? { epTitle } : {}),
+        // 作品级字段缺失时省略,由服务端「空值不覆盖」保留既有标题/封面
+        ...(meta?.title ? { title: meta.title } : {}),
+        ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
+      }).catch(() => {});
+    });
   }, []);
 
-  // 加载章节(#15);成功后立即上报一次;离开章节(切换 pid/卸载)补报未上报页码
+  // 加载章节(#15);起始页按 ?page → 设置 → 续读记录决定,加载成功不做上报
   useEffect(() => {
     if (!pid || !isLoggedIn) return;
     let cancelled = false;
@@ -185,19 +205,17 @@ export default function JmReaderPage() {
     setError(null);
     setLoading(true);
     jmPhotos(pid)
-      .then((data) => {
+      .then(async (data) => {
+        if (cancelled) return;
+        // 起始页:显式 ?page 优先,其次服务端设置/续读记录(见 lib/jm/reading)
+        const start = await resolveJmStartPage(pid, searchParams.get("page"), data.images.length);
         if (cancelled) return;
         photosRef.current = data;
-        // 初始页码:?page=N(1 基)→ clamp [1, 总页数]
-        const total = data.images.length;
-        const raw = Number.parseInt(searchParams.get("page") ?? "", 10);
-        const initial =
-          Number.isFinite(raw) && raw >= 1 ? Math.min(raw, Math.max(total, 1)) : 1;
-        setCurrentPage(initial);
+        // 起始页记为「已上报」:不翻页就不会改写服务端进度
+        lastReportedPageRef.current = start;
+        setCurrentPage(start);
         setPhotos(data);
         setLoading(false);
-        // ① 进入章节成功后立即上报一次(当前页)
-        reportProgress(initial);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -293,15 +311,18 @@ export default function JmReaderPage() {
     [totalPages]
   );
 
-  // 章节衔接:翻过末页 → 下一章(replace 避免历史栈堆积);"prev" 越界不做
+  // 章节衔接:翻过末页 → 下一章(replace 避免历史栈堆积)
+  // 已是最后一章时给出明确收尾提示,而不是静默什么都不发生(用户会以为卡住了)
   const handleBoundaryReached = useCallback(
     (dir: "next" | "prev") => {
       if (dir !== "next" || !photos) return;
       if (photos.hasNext && photos.nextPid) {
         navigate(`/jm/reader/${photos.nextPid}`, { replace: true });
+        return;
       }
+      toast.info("已经是最后一章了");
     },
-    [photos, navigate]
+    [photos, navigate, toast]
   );
 
   /* ── AOP 切面 ①:图片加载失败捕获重试 ──
@@ -520,10 +541,12 @@ export default function JmReaderPage() {
           hasNext={photos.hasNext}
           nextPid={photos.nextPid}
           onNavigate={handleChapterNavigate}
+          raised={toolbarVisible}
         />
 
         {/* AOP 装饰层:批量下载入口(左下浮动按钮,避开右下角章节导航)
-            「下载整本 / 下载本章」→ 服务端逐章抓图并打包 zip,完成后清理临时目录 */}
+            「下载整本 / 下载本章」→ 服务端逐章抓图并打包 zip,完成后清理临时目录
+            工具栏可见时整体上移,避免两个 FAB 压在工具栏底栏与翻页热区之间 */}
         <JmDownloadFab
           comic={{
             aid: photos.aid || aidParam,
@@ -532,7 +555,9 @@ export default function JmReaderPage() {
             currentTitle: photos.title,
           }}
           label="批量下载"
-          className={`fixed bottom-5 left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-transform active:scale-95 ${
+          className={`fixed left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-[bottom,transform] duration-200 active:scale-95 ${
+            toolbarVisible ? "bottom-24" : "bottom-5"
+          } ${
             readerTheme === "day"
               ? "border-black/[0.06] bg-white/85 text-gray-700 shadow-black/10"
               : "border-white/[0.08] bg-zinc-900/85 text-white/80 shadow-black/40"

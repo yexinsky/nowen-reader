@@ -21,11 +21,13 @@ import (
 // Settings 服务端设置(GET/PUT /api/jm/settings 契约)。
 // downloadDir:批量下载默认归档目录(书库管理中的目录,空 = 用内置测试目录)。
 // downloadTags:下载入库后自动把 JM 标签挂到书库 Comic(MOBILE_API.md §6,默认开)。
+// startFromFirstPage:阅读器进章节一律从第 1 页开始,忽略服务端记录的续读页(默认关)。
 type Settings struct {
-	Proxy        string `json:"proxy"`
-	ImageQuality string `json:"imageQuality"`
-	DownloadDir  string `json:"downloadDir"`
-	DownloadTags bool   `json:"downloadTags"`
+	Proxy              string `json:"proxy"`
+	ImageQuality       string `json:"imageQuality"`
+	DownloadDir        string `json:"downloadDir"`
+	DownloadTags       bool   `json:"downloadTags"`
+	StartFromFirstPage bool   `json:"startFromFirstPage"`
 }
 
 // DefaultProxy 默认上游代理(Python 版 JM_PROXY 默认值)。
@@ -64,6 +66,7 @@ func atomicWrite(path string, data []byte) error {
 
 // LoadSettings 读设置;proxy 为 null/缺省时回退 JM_PROXY(env)再回退默认值。
 // downloadTags 缺省(旧 settings.json 无该键)为 true。
+// startFromFirstPage 缺省为 false(保持「按记录续读」的历史行为)。
 func (s *Store) LoadSettings(envProxy string) Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,6 +95,9 @@ func (s *Store) LoadSettings(envProxy string) Settings {
 	if v, ok := disk["downloadTags"].(bool); ok {
 		out.DownloadTags = v
 	}
+	if v, ok := disk["startFromFirstPage"].(bool); ok {
+		out.StartFromFirstPage = v
+	}
 	return out
 }
 
@@ -101,10 +107,11 @@ func (s *Store) SaveSettings(st Settings) error {
 	defer s.mu.Unlock()
 	st.ImageQuality = normalizeQuality(st.ImageQuality)
 	data, err := json.Marshal(map[string]any{
-		"proxy":        st.Proxy,
-		"imageQuality": st.ImageQuality,
-		"downloadDir":  st.DownloadDir,
-		"downloadTags": st.DownloadTags,
+		"proxy":              st.Proxy,
+		"imageQuality":       st.ImageQuality,
+		"downloadDir":        st.DownloadDir,
+		"downloadTags":       st.DownloadTags,
+		"startFromFirstPage": st.StartFromFirstPage,
 	})
 	if err != nil {
 		return err
@@ -124,23 +131,45 @@ type HistoryItem struct {
 }
 
 // ReportHistory 上报进度;同 aid+pid 幂等覆盖并刷新时间。
+//
+// 进度上报只带「看到第几页」这一确定性信息,title/coverUrl/epTitle 由调用方按需
+// 顺带上报。历史版本里阅读器恒传 coverUrl=""、epTitle=章节名,把服务端已存的封面
+// 与漫画名覆盖成空/错值,导致历史列表整屏裂图。因此这里做「缺省不覆盖」兜底:
+// 新值不是非空有效字符串时沿用既有记录的值,只有显式给出非空值才更新。
 func (s *Store) ReportHistory(item HistoryItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.loadHistoryLocked()
 	key := item.Aid + "+" + item.Pid
-	replaced := false
 	for i := range list {
-		if list[i].Aid+"+"+list[i].Pid == key {
-			list[i] = item
-			replaced = true
-			break
+		if list[i].Aid+"+"+list[i].Pid != key {
+			continue
 		}
+		if blankStr(item.Title) {
+			item.Title = list[i].Title
+		}
+		if blankStr(item.CoverURL) {
+			item.CoverURL = list[i].CoverURL
+		}
+		if blankStr(epTitleStr(item.EpTitle)) {
+			item.EpTitle = list[i].EpTitle
+		}
+		list[i] = item
+		return s.saveHistoryLocked(list)
 	}
-	if !replaced {
-		list = append(list, item)
-	}
+	list = append(list, item)
 	return s.saveHistoryLocked(list)
+}
+
+// blankStr 上报字段是否视为「未提供」(空串或仅空白)。
+func blankStr(v string) bool { return strings.TrimSpace(v) == "" }
+
+// epTitleStr 把契约里 string|null 的 EpTitle 归一为字符串。
+func epTitleStr(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 func (s *Store) loadHistoryLocked() []HistoryItem {

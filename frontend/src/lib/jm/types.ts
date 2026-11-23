@@ -219,6 +219,8 @@ export interface JmSettings {
   downloadDir: string;
   /** 下载入库后自动把 JM 标签挂到书库漫画(私有扩展,默认开) */
   downloadTags: boolean;
+  /** 阅读器进章节一律从第 1 页开始,忽略服务端记录的续读页(默认关) */
+  startFromFirstPage: boolean;
   mock: boolean;
 }
 

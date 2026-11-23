@@ -309,7 +309,12 @@ export default function DoublePageView({
             alt={`Page ${pageIndex + 1}`}
             className={`${getImageClass(loaded)}`}
             style={imageFilter ? { filter: imageFilter } : undefined}
-            onLoad={() => setLoaded(true)}
+            onLoad={() => {
+              // 重试成功(含外层 AOP 改 src 的 cache-bust 重试)后必须清 error,
+              // 否则失败遮罩会压住已加载完成的图
+              setError(false);
+              setLoaded(true);
+            }}
             onError={() => setError(true)}
           />
         ) : (
@@ -320,7 +325,10 @@ export default function DoublePageView({
             fill
             className={`${getImageClass(loaded)}`}
             style={imageFilter ? { filter: imageFilter } : undefined}
-            onLoad={() => setLoaded(true)}
+            onLoad={() => {
+              setError(false);
+              setLoaded(true);
+            }}
             onError={() => setError(true)}
             sizes="50vw"
           />
