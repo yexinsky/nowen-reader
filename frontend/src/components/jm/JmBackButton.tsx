@@ -27,10 +27,11 @@ export function JmBackButton({ to = "/jm", label = "返回在线漫画" }: { to?
       }}
       aria-label={label}
       title={label}
-      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm text-muted transition-colors hover:bg-card-hover hover:text-foreground"
+      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm text-muted transition-colors hover:bg-card-hover hover:text-foreground sm:px-3"
     >
       <ArrowLeft className="h-4 w-4" />
-      返回
+      {/* 手机上只留图标:页头宽度有限,标题常被两个按钮挤成省略号 */}
+      <span className="hidden sm:inline">返回</span>
     </button>
   );
 }

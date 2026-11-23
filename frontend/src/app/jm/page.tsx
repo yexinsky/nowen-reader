@@ -255,16 +255,17 @@ function UserCard() {
         </button>
       </div>
 
-      {/* 快捷入口压成一行可横滑 chips(手机上不再换行占三行) */}
-      <div className="-mx-1 mt-2 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* 快捷入口压成一行(手机上不再换行占三行):5 个入口等分整行。
+          手机宽度下只留文字(图标会挤掉「每周必看」的最后一个字),sm 以上带上图标 */}
+      <div className="mt-2 grid grid-cols-5 gap-1">
         {quickLinks.map(({ href, icon: Icon, label }) => (
           <Link
             key={href}
             href={href}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+            className="inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-full border border-border/60 bg-background px-1 text-[11px] text-muted transition-colors hover:border-accent/50 hover:text-foreground"
           >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
+            <Icon className="hidden h-3.5 w-3.5 shrink-0 sm:block" />
+            <span className="truncate">{label}</span>
           </Link>
         ))}
       </div>

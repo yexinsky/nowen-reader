@@ -295,10 +295,11 @@ export function JmDownloadTasksButton() {
         onClick={() => setOpen(true)}
         aria-label="下载任务"
         title="查看下载队列"
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm text-muted transition-colors hover:bg-card-hover hover:text-foreground"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm text-muted transition-colors hover:bg-card-hover hover:text-foreground sm:px-3"
       >
         <Download className="h-4 w-4" />
-        下载任务
+        {/* 手机上只留图标:与返回按钮一起把页头标题的位置让出来 */}
+        <span className="hidden sm:inline">下载任务</span>
         {activeCount > 0 && (
           <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
             {activeCount > 99 ? "99+" : activeCount}
