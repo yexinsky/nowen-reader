@@ -10,7 +10,9 @@ package handler
 //	DELETE /api/jm/downloads/:id          → 移除任务记录(不动已归档文件)
 //
 // 归档口径(见 internal/jm/download.go):逐章抓图 → 自有沙箱落盘 → 打包 zip →
-// 写入目标目录(同名递增后缀,绝不覆盖既有文件)→ 清理沙箱 → 触发书库扫描入库。
+// 写入目标目录(同一作品固定「标题.zip」,重复下载原子覆盖同一文件) → 清理沙箱 →
+// 触发书库扫描入库。覆盖既有归档须请求体显式带上 overwrite=true,否则返回 409,
+// 避免书库里同一本被静默替换。
 
 import (
 	"errors"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/config"
+	"github.com/nowen-reader/nowen-reader/internal/dlarchive"
 	"github.com/nowen-reader/nowen-reader/internal/jm"
 	"github.com/nowen-reader/nowen-reader/internal/service"
 	"github.com/nowen-reader/nowen-reader/internal/store"
@@ -163,6 +166,7 @@ func jmDownloads() *jm.DownloadManager {
 			}
 			go func() {
 				jmScanLibraryAfterDownload(t.LibraryID)
+				jmRefreshComicMetrics(t.LibraryID, t.ZipName, t.ZipPath, t.ZipSize)
 				jmApplyTagsWhenComicExists(t)
 			}()
 		})
@@ -185,6 +189,42 @@ func jmScanLibraryAfterDownload(libraryID string) {
 		}
 	}
 	log.Printf("[jm] 下载入库扫描放弃(library=%s):扫描任务持续占用", libraryID)
+}
+
+// jmRefreshComicMetrics 归档覆盖后刷新书库记录的体积与页数。
+// 书库扫描只处理「新增/删除」,同路径覆盖写回不会重建既有行,也不刷新 fileSize;
+// 重复下载命中同名归档时必须显式回写这两项,否则书库仍显示旧文件的大小/页数。
+// 只记日志、绝不向任务注错——下载本体已成功,刷新指标是附加增强。
+func jmRefreshComicMetrics(libraryID, zipName, zipPath string, zipSize int64) {
+	if libraryID == "" || zipName == "" {
+		return
+	}
+	comicID := store.PathToID(libraryID, zipName)
+	deadline := time.Now().Add(jmTagPollTimeout)
+	for {
+		exists, err := store.ComicRelativePathExists(libraryID, zipName, "")
+		if err == nil && exists {
+			if err := store.UpdateComicFileSize(comicID, zipSize); err != nil {
+				log.Printf("[jm] 归档体积回写失败(comic=%s): %v", comicID, err)
+			}
+			// 覆盖后的页数可能与旧文件不同,直接按新归档重算(重算失败保留原值)。
+			if pageCount, pErr := service.GetArchivePageCount(zipPath, true); pErr == nil && pageCount > 0 {
+				if err := store.UpdateComicPageCount(comicID, pageCount); err != nil {
+					log.Printf("[jm] 归档页数回写失败(comic=%s): %v", comicID, err)
+				}
+			}
+			return
+		}
+		if err != nil {
+			log.Printf("[jm] 归档指标:查询入库状态失败(comic=%s): %v", comicID, err)
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[jm] 归档指标回写放弃(comic=%s):等待入库超时(%s)", comicID, jmTagPollTimeout)
+			return
+		}
+		time.Sleep(jmTagPollInterval)
+	}
 }
 
 // jmTagPollInterval / jmTagPollTimeout 入库打标签的存在性轮询节奏:
@@ -330,13 +370,32 @@ func registerJMDownloadRoutes(g *gin.RouterGroup) {
 		jmOK(c, gin.H{"list": jmDownloads().List(), "tempRoot": jmDownloads().TempRoot()})
 	})
 
+	// 重复下载预检:返回该作品在目标目录的归档路径与是否已存在。
+	// 前端在打开下载对话框/切换目录时调用,命中则提示「将覆盖」而不必等提交后才报错。
+	g.GET("/downloads/check", func(c *gin.Context) {
+		destDir := strings.TrimSpace(c.Query("destDir"))
+		if destDir == "" {
+			jmContent422(c, "destDir 必填")
+			return
+		}
+		title := strings.TrimSpace(c.Query("title"))
+		aid := strings.TrimSpace(c.Query("aid"))
+		base := jm.ArchiveName(destDir, title, aid)
+		jmOK(c, gin.H{
+			"path":   filepath.Join(destDir, base+dlarchive.Ext),
+			"name":   base + dlarchive.Ext,
+			"exists": dlarchive.Exists(destDir, base),
+		})
+	})
+
 	g.POST("/downloads", func(c *gin.Context) {
 		var body struct {
-			Aid     string   `json:"aid"`
-			Title   string   `json:"title"`
-			Author  string   `json:"author"`
-			Pids    []string `json:"pids"`
-			DestDir string   `json:"destDir"`
+			Aid       string   `json:"aid"`
+			Title     string   `json:"title"`
+			Author    string   `json:"author"`
+			Pids      []string `json:"pids"`
+			DestDir   string   `json:"destDir"`
+			Overwrite bool     `json:"overwrite"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			jmContent422(c, err.Error())
@@ -367,6 +426,17 @@ func registerJMDownloadRoutes(g *gin.RouterGroup) {
 		}
 		if !target.CanManage {
 			c.JSON(403, gin.H{"detail": "Forbidden: 无该书库的管理权限"})
+			return
+		}
+
+		// 重复下载预检:同一作品在目标目录已归档时不静默覆盖,需显式 overwrite。
+		archiveName := jm.ArchiveName(target.Path, body.Title, body.Aid)
+		if !body.Overwrite && dlarchive.Exists(target.Path, archiveName) {
+			c.JSON(409, gin.H{
+				"detail":   "该作品在目标目录已存在:「" + archiveName + dlarchive.Ext + "」。继续下载会覆盖书库中的这一份,请确认后重试",
+				"path":     filepath.Join(target.Path, archiveName+dlarchive.Ext),
+				"conflict": true,
+			})
 			return
 		}
 

@@ -10,16 +10,20 @@ package handler
 //	DELETE /api/pica/downloads/:id          → 移除任务记录(不动已归档文件)
 //
 // 归档口径(见 internal/pica/download.go):逐章拉图 → 沙箱落盘 → 打包 zip →
-// 写入目标目录(同名递增后缀)→ 清理沙箱 → 触发书库扫描入库 + 自动标签。
+// 写入目标目录(同一作品固定「标题.zip」,重复下载原子覆盖同一文件) → 清理沙箱 →
+// 触发书库扫描入库 + 自动标签。覆盖既有归档须请求体显式带上 overwrite=true,
+// 否则返回 409,避免书库里同一本被静默替换。
 
 import (
 	"errors"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nowen-reader/nowen-reader/internal/dlarchive"
 	"github.com/nowen-reader/nowen-reader/internal/pica"
 	"github.com/nowen-reader/nowen-reader/internal/store"
 )
@@ -45,6 +49,7 @@ func picaDownloads() *pica.DownloadManager {
 			}
 			go func() {
 				jmScanLibraryAfterDownload(t.LibraryID)
+				jmRefreshComicMetrics(t.LibraryID, t.ZipName, t.ZipPath, t.ZipSize)
 				picaApplyTagsWhenComicExists(t)
 			}()
 		})
@@ -133,9 +138,23 @@ func registerPicaDownloadRoutes(g *gin.RouterGroup) {
 			"testDir": downloadTestDir("pica"),
 		})
 	})
-
 	g.GET("/downloads", func(c *gin.Context) {
 		jmOK(c, gin.H{"list": picaDownloads().List(), "tempRoot": picaDownloads().TempRoot()})
+	})
+
+	// 重复下载预检:返回该作品在目标目录的归档路径与是否已存在。
+	g.GET("/downloads/check", func(c *gin.Context) {
+		destDir := strings.TrimSpace(c.Query("destDir"))
+		if destDir == "" {
+			picaContent422(c, "destDir 必填")
+			return
+		}
+		base := pica.ArchiveName(destDir, strings.TrimSpace(c.Query("title")), strings.TrimSpace(c.Query("bookId")))
+		jmOK(c, gin.H{
+			"path":   filepath.Join(destDir, base+dlarchive.Ext),
+			"name":   base + dlarchive.Ext,
+			"exists": dlarchive.Exists(destDir, base),
+		})
 	})
 
 	g.POST("/downloads", func(c *gin.Context) {
@@ -145,11 +164,12 @@ func registerPicaDownloadRoutes(g *gin.RouterGroup) {
 			return
 		}
 		var body struct {
-			BookID  string `json:"bookId"`
-			Title   string `json:"title"`
-			Author  string `json:"author"`
-			Orders  []int  `json:"orders"`
-			DestDir string `json:"destDir"`
+			BookID    string `json:"bookId"`
+			Title     string `json:"title"`
+			Author    string `json:"author"`
+			Orders    []int  `json:"orders"`
+			DestDir   string `json:"destDir"`
+			Overwrite bool   `json:"overwrite"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			picaContent422(c, err.Error())
@@ -180,6 +200,17 @@ func registerPicaDownloadRoutes(g *gin.RouterGroup) {
 		}
 		if !target.CanManage {
 			c.JSON(403, gin.H{"detail": "Forbidden: 无该书库的管理权限"})
+			return
+		}
+
+		// 重复下载预检:同一作品在目标目录已归档时不静默覆盖,需显式 overwrite。
+		archiveName := pica.ArchiveName(target.Path, body.Title, body.BookID)
+		if !body.Overwrite && dlarchive.Exists(target.Path, archiveName) {
+			c.JSON(409, gin.H{
+				"detail":   "该作品在目标目录已存在:「" + archiveName + dlarchive.Ext + "」。继续下载会覆盖书库中的这一份,请确认后重试",
+				"path":     filepath.Join(target.Path, archiveName+dlarchive.Ext),
+				"conflict": true,
+			})
 			return
 		}
 

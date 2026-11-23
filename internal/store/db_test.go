@@ -518,6 +518,44 @@ func TestUpdateComicPageCount(t *testing.T) {
 	}
 }
 
+// TestUpdateComicFileSize 覆盖下载会复用同一文件路径，扫描不会重建记录，
+// 体积必须显式回写才能跟上新归档。
+func TestUpdateComicFileSize(t *testing.T) {
+	setupTestDB(t)
+
+	comics := []struct {
+		ID       string
+		Filename string
+		Title    string
+		FileSize int64
+	}{
+		{"fs-comic-1", "fs-test.zip", "FS Test", 1000},
+	}
+	if err := BulkCreateComics(comics); err != nil {
+		t.Fatalf("BulkCreateComics failed: %v", err)
+	}
+
+	if err := UpdateComicFileSize("fs-comic-1", 2048); err != nil {
+		t.Fatalf("UpdateComicFileSize failed: %v", err)
+	}
+	comic, err := GetComicByID("fs-comic-1")
+	if err != nil {
+		t.Fatalf("GetComicByID failed: %v", err)
+	}
+	if comic.FileSize != 2048 {
+		t.Errorf("Expected fileSize=2048, got %d", comic.FileSize)
+	}
+
+	// 非法入参直接忽略，不能把既有体积清零
+	if err := UpdateComicFileSize("fs-comic-1", 0); err != nil {
+		t.Fatalf("UpdateComicFileSize(0) should be a no-op, got %v", err)
+	}
+	comic, _ = GetComicByID("fs-comic-1")
+	if comic.FileSize != 2048 {
+		t.Errorf("Expected fileSize=2048 after no-op, got %d", comic.FileSize)
+	}
+}
+
 func TestReadingSessionTotalReadTime(t *testing.T) {
 	setupTestDB(t)
 

@@ -603,6 +603,18 @@ func UpdateComicPageCount(comicID string, pageCount int) error {
 	})
 }
 
+// UpdateComicFileSize 更新单本漫画的体积。重复下载覆盖同一 zip 后，扫描只负责
+// 新增/删除记录、不会刷新既有行，需由下载侧显式回写，避免书库体积停留在旧值。
+func UpdateComicFileSize(comicID string, fileSize int64) error {
+	if comicID == "" || fileSize <= 0 {
+		return nil
+	}
+	return runSerializedDBWrite("update-comic-file-size", func() error {
+		_, err := db.Exec(`UPDATE "Comic" SET "fileSize" = ? WHERE "id" = ?`, fileSize, comicID)
+		return err
+	})
+}
+
 func UpdateComicPageCountIfStale(comicID string, pageCount int) error {
 	if pageCount <= 0 {
 		return nil
