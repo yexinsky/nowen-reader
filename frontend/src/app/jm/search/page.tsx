@@ -21,8 +21,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Link from "next/link";
-import { AlertTriangle, Loader2, Search, Tag, User, X } from "lucide-react";
+import { AlertTriangle, Compass, Loader2, RotateCcw, Search, Tag, User, X } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
+import { useToast } from "@/components/Toast";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
 import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
@@ -174,6 +175,55 @@ function buildParams(c: SearchConditions, page: number): JmSearchParams {
   return params;
 }
 
+/* ── 条件 ⇄ URL ──
+ * 条件写进 URL 才能在「进详情 → 返回」时原样还原(浏览器前进/后退、刷新、分享同理)。
+ * 只放真正影响结果的字段,滚动位置由浏览器自行恢复。 */
+
+/** 表单 → URLSearchParams(默认值不写入,保持链接干净) */
+function formToQuery(form: SearchForm): URLSearchParams {
+  const q = new URLSearchParams();
+  const keyword = form.keyword.trim();
+  if (keyword) {
+    q.set("keyword", keyword);
+    if (form.searchType !== "site") q.set("searchType", form.searchType);
+    if (form.y) {
+      q.set("y", form.y);
+      if (form.m) q.set("m", form.m);
+    }
+  } else if (form.mainCategory) {
+    q.set("mainCategory", form.mainCategory);
+  }
+  if (form.sort !== "mr") q.set("sort", form.sort);
+  return q;
+}
+
+/** URLSearchParams → 表单;非法值一律回落默认,不让坏链接把页面搞崩 */
+function queryToForm(q: URLSearchParams): SearchForm {
+  const keyword = (q.get("keyword") ?? "").trim();
+  const pickSort = q.get("sort");
+  const sort: JmSearchSort = SORT_OPTIONS.some((o) => o.value === pickSort)
+    ? (pickSort as JmSearchSort)
+    : "mr";
+  const pickType = q.get("searchType");
+  const searchType: JmSearchType = SEARCH_TYPES.some((t) => t.value === pickType)
+    ? (pickType as JmSearchType)
+    : keyword
+      ? "tag"
+      : "site";
+  const y = (q.get("y") ?? "").trim();
+  const m = (q.get("m") ?? "").trim();
+  const cat = q.get("mainCategory") ?? "";
+  return {
+    keyword,
+    sort,
+    searchType,
+    y: parseRangeInt(y, 9999) ? y : "",
+    m: parseRangeInt(m, 12) ? m : "",
+    // 关键字模式下分类不生效,直接丢掉,避免 UI 上出现一个无效选择
+    mainCategory: keyword ? "" : MAIN_CATEGORIES.some((c) => c.value === cat) ? cat : "",
+  };
+}
+
 export default function JmSearchPage() {
   return (
     <>
@@ -199,18 +249,15 @@ export default function JmSearchPage() {
 }
 
 function SearchContent() {
-  // URL 参数初始化(仅挂载读一次;详情页「搜索标签」跳入必然重挂载本路由):
-  // keyword 存在 → searchType 取合法参数值,缺省/非法回退 tag
-  const [searchParams] = useSearchParams();
-  const initialForm = useMemo<SearchForm>(() => {
-    const keyword = (searchParams.get("keyword") ?? "").trim();
-    if (!keyword) return INITIAL_FORM;
-    const st = searchParams.get("searchType");
-    const searchType: JmSearchType = SEARCH_TYPES.some((t) => t.value === st)
-      ? (st as JmSearchType)
-      : "tag";
-    return { ...INITIAL_FORM, keyword, searchType };
-  }, [searchParams]);
+  const toast = useToast();
+  // URL 参数是条件的唯一真值来源:进详情再返回、刷新、分享都能原样还原
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialForm = useMemo<SearchForm>(
+    () => (searchParams.toString() ? queryToForm(searchParams) : INITIAL_FORM),
+    // 只在挂载时读一次;后续变化由 runSearch 自己写回,不需要再同步回来(否则光标/输入会被打断)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   const [form, setForm] = useState<SearchForm>(initialForm);
   // 首屏即按初始条件搜索(URL 带关键字时自动执行,否则默认分类浏览模式)
@@ -279,20 +326,25 @@ function SearchContent() {
     []
   );
 
-  /** 提交搜索:换条件一律重置到第 1 页 */
-  const runSearch = useCallback((next: SearchForm) => {
-    const { conditions, notice: n } = toConditions(next);
-    // 怪癖:自动改写条件(去分类/排行降级)时同步表单选择框,保持 UI 与实际请求一致
-    const corrected: SearchForm = {
-      ...next,
-      mainCategory: conditions.mainCategory ?? "",
-      sort: conditions.sort,
-    };
-    setForm(corrected);
-    setNotice(n);
-    setPageCap(false);
-    setSubmitted(conditions);
-  }, []);
+  /** 提交搜索:换条件一律重置到第 1 页,并把条件写进 URL(返回时原样还原) */
+  const runSearch = useCallback(
+    (next: SearchForm) => {
+      const { conditions, notice: n } = toConditions(next);
+      // 怪癖:自动改写条件(去分类/排行降级)时同步表单选择框,保持 UI 与实际请求一致
+      const corrected: SearchForm = {
+        ...next,
+        mainCategory: conditions.mainCategory ?? "",
+        sort: conditions.sort,
+      };
+      setForm(corrected);
+      setNotice(n);
+      setPageCap(false);
+      setSubmitted(conditions);
+      // replace:连续调条件不应堆出一串历史,返回要回到进入搜索前的页面
+      setSearchParams(formToQuery(corrected), { replace: true });
+    },
+    [setSearchParams]
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -304,25 +356,31 @@ function SearchContent() {
     runSearch(form);
   }, [form, runSearch]);
 
-  // 下拉条件变化 → 立即按新条件回到第 1 页
+  // 下拉条件变化 → 立即按新条件回到第 1 页(含年份/月份:不再需要额外点一次搜索)
   const updateSort = (sort: JmSearchSort) => runSearch({ ...form, sort });
   const updateSearchType = (searchType: JmSearchType) => runSearch({ ...form, searchType });
   const updateMainCategory = (mainCategory: string) => runSearch({ ...form, mainCategory });
+  const updateYear = (y: string) => runSearch({ ...form, y, m: y ? form.m : "" });
+  const updateMonth = (m: string) => runSearch({ ...form, m });
 
   /** 点击「我的标签」chip:按该标签搜索(searchType 强制为 tag) */
   /** 点「我的标签/作者」chip:按该项类型(searchType=tag/author)就地搜索 */
   const searchByItem = (it: Pick<JmTagFavorite, "type" | "tag">) =>
     runSearch({ ...form, keyword: it.tag, searchType: it.type });
 
-  /** 就地取消收藏:乐观移除,失败静默(下次进入恢复) */
+  /** 就地取消收藏:乐观移除 + 失败回滚;与标签页(#22)保持同一套语义(成功/失败都给反馈) */
   const removeSavedItem = useCallback(async (it: Pick<JmTagFavorite, "type" | "tag">) => {
-    setSavedTags((prev) => prev.filter((x) => !(x.type === it.type && x.tag === it.tag)));
+    const prev = savedTags;
+    setSavedTags((cur) => cur.filter((x) => !(x.type === it.type && x.tag === it.tag)));
     try {
       await jmRemoveTagFavorite(it.tag, it.type);
-    } catch {
-      // 静默:移除失败不回滚 UI,重进页面会恢复真实状态
+      toast.success(`已取消${it.type === "author" ? "作者" : "标签"}收藏:${it.tag}`);
+    } catch (err) {
+      // 失败回滚:不能让"看起来删掉了、其实还在"的状态留在界面上
+      setSavedTags(prev);
+      toast.error(isJmApiError(err) ? err.message : "取消收藏失败,请稍后重试");
     }
-  }, []);
+  }, [savedTags, toast]);
 
   useEffect(() => {
     loadPage(submitted, 1);
@@ -340,33 +398,27 @@ function SearchContent() {
   const keywordMode = form.keyword.trim() !== "";
   const isBrowseMode = submitted.keyword === "";
 
-  if (loading) return <GridSkeleton />;
-  if (error && items.length === 0) {
-    return (
-      <div>
-        {savedTags.length > 0 && (
-          <SavedTagsRow tags={savedTags} onSearch={searchByItem} onRemove={removeSavedItem} />
-        )}
-        <SearchFormPanel
-          form={form}
-          keywordMode={keywordMode}
-          onFormChange={setForm}
-          onSubmit={handleSubmit}
-          onEnter={submitKeyword}
-          onSortChange={updateSort}
-          onSearchTypeChange={updateSearchType}
-          onMainCategoryChange={updateMainCategory}
-        />
-        <JmErrorCard error={error} onRetry={() => loadPage(submitted, 1)} />
-      </div>
-    );
-  }
+  /** 恢复默认条件:清空关键字/年月/分类,排序回最新,并立即重查 */
+  const resetConditions = () => {
+    runSearch(INITIAL_FORM);
+  };
+
+  /** 条件区是否有任何「非默认」项(用于显示「重置条件」) */
+  const dirty =
+    form.keyword.trim() !== "" ||
+    form.y !== "" ||
+    form.m !== "" ||
+    form.mainCategory !== "" ||
+    form.sort !== "mr" ||
+    form.searchType !== "site";
 
   return (
     <div>
       {savedTags.length > 0 && (
         <SavedTagsRow tags={savedTags} onSearch={searchByItem} onRemove={removeSavedItem} />
       )}
+
+      {/* 表单常驻:骨架只替换下方结果区,换排序/分类/翻页时搜索框与条件不再整块消失 */}
       <SearchFormPanel
         form={form}
         keywordMode={keywordMode}
@@ -376,6 +428,8 @@ function SearchContent() {
         onSortChange={updateSort}
         onSearchTypeChange={updateSearchType}
         onMainCategoryChange={updateMainCategory}
+        onYearChange={updateYear}
+        onMonthChange={updateMonth}
       />
 
       {/* 上游怪癖提示(自动取消分类 / 页码封顶) */}
@@ -386,32 +440,90 @@ function SearchContent() {
         </div>
       )}
 
-      {/* 结果计数(total 存在时展示) */}
-      {total !== undefined && (
-        <div className="mb-3 text-xs text-muted">共 {total.toLocaleString("zh-CN")} 条</div>
-      )}
+      {/* 结果概要行:计数 / 加载中 + 重置条件(常驻,不随结果区被骨架替换) */}
+      <div className="mb-3 flex min-h-6 items-center justify-between gap-2 text-xs text-muted">
+        <span className="inline-flex items-center gap-1.5">
+          {loading ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              加载中…
+            </>
+          ) : total !== undefined ? (
+            `共 ${total.toLocaleString("zh-CN")} 条`
+          ) : null}
+        </span>
+        {dirty && (
+          <button
+            type="button"
+            onClick={resetConditions}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[11px] text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+          >
+            <RotateCcw className="h-3 w-3" />
+            重置条件
+          </button>
+        )}
+      </div>
 
-      <JmBatchSelectionProvider comics={items}>
-        <JmComicGrid
-          comics={items}
-          emptyText={
-            isBrowseMode ? "该分类下暂无内容" : "没有找到相关漫画,换个关键字或条件试试"
-          }
-        />
-      </JmBatchSelectionProvider>
-
-      {items.length > 0 && (
-        <div ref={sentinelRef}>
-          <LoadMoreFooter
-            loadingMore={loadingMore}
-            error={error}
-            canLoadMore={canLoadMore}
-            pageCap={pageCap}
-            ended={!hasNext}
-            onLoadMore={loadMore}
-            onRetry={() => loadPage(submitted, page + 1)}
-          />
-        </div>
+      {/* 结果区:只有这里随加载替换为骨架 */}
+      {loading ? (
+        <GridSkeleton />
+      ) : error && items.length === 0 ? (
+        <JmErrorCard error={error} onRetry={() => loadPage(submitted, 1)} />
+      ) : (
+        <>
+          {items.length > 0 ? (
+            <JmBatchSelectionProvider comics={items}>
+              <JmComicGrid comics={items} />
+            </JmBatchSelectionProvider>
+          ) : (
+            /* 空态给行动指引:不只说"没有结果",还告诉用户下一步能点什么 */
+            <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-14 text-center">
+              <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-lg bg-muted/10">
+                <Search className="h-7 w-7 text-muted/40" />
+              </div>
+              <p className="text-sm font-medium text-foreground">
+                {isBrowseMode ? "该分类下暂无内容" : "没有找到相关漫画"}
+              </p>
+              <p className="mt-1.5 max-w-xs text-xs leading-relaxed text-muted">
+                {isBrowseMode
+                  ? "换个主分类,或直接用关键字搜索试试。"
+                  : "试试减少条件、换同义词,或把搜索范围放宽到「全部」。"}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                {dirty && (
+                  <button
+                    type="button"
+                    onClick={resetConditions}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent/50 hover:text-accent"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    重置条件
+                  </button>
+                )}
+                <Link
+                  href="/jm/week"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent/50 hover:text-accent"
+                >
+                  <Compass className="h-3.5 w-3.5" />
+                  去看每周必看
+                </Link>
+              </div>
+            </div>
+          )}
+          {items.length > 0 && (
+            <div ref={sentinelRef}>
+              <LoadMoreFooter
+                loadingMore={loadingMore}
+                error={error}
+                canLoadMore={canLoadMore}
+                pageCap={pageCap}
+                ended={!hasNext}
+                onLoadMore={loadMore}
+                onRetry={() => loadPage(submitted, page + 1)}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -451,7 +563,7 @@ function SavedTagsRow({
       <div className="mt-2 flex flex-wrap gap-1.5">
         {tagItems.map(({ tag, type }) => (
           <span
-            key={`${type} ${tag}`}
+            key={`${type}\u0000${tag}`}
             className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
           >
             <button
@@ -474,7 +586,7 @@ function SavedTagsRow({
         ))}
         {authorItems.map(({ tag, type }) => (
           <span
-            key={`${type} ${tag}`}
+            key={`${type}\u0000${tag}`}
             className="inline-flex items-center gap-0.5 rounded-full border border-violet-400/40 bg-background py-0.5 pl-2.5 pr-1 text-xs text-foreground"
           >
             <button
@@ -510,6 +622,8 @@ function SearchFormPanel({
   onSortChange,
   onSearchTypeChange,
   onMainCategoryChange,
+  onYearChange,
+  onMonthChange,
 }: {
   form: SearchForm;
   keywordMode: boolean;
@@ -520,6 +634,9 @@ function SearchFormPanel({
   onSortChange: (sort: JmSearchSort) => void;
   onSearchTypeChange: (t: JmSearchType) => void;
   onMainCategoryChange: (c: string) => void;
+  /** 年份/月份也即时生效,和其余下拉一致(不再需要额外点一次「搜索」) */
+  onYearChange: (y: string) => void;
+  onMonthChange: (m: string) => void;
 }) {
   return (
     <form
@@ -597,9 +714,7 @@ function SearchFormPanel({
           <span className="text-xs text-muted">年份</span>
           <select
             value={form.y}
-            onChange={(e) =>
-              onFormChange((f) => ({ ...f, y: e.target.value, m: e.target.value ? f.m : "" }))
-            }
+            onChange={(e) => onYearChange(e.target.value)}
             disabled={!keywordMode}
             title={keywordMode ? undefined : "仅关键字搜索时可用"}
             className={SELECT_CLASS}
@@ -617,7 +732,7 @@ function SearchFormPanel({
           <span className="text-xs text-muted">月份</span>
           <select
             value={form.m}
-            onChange={(e) => onFormChange((f) => ({ ...f, m: e.target.value }))}
+            onChange={(e) => onMonthChange(e.target.value)}
             disabled={!keywordMode || !form.y}
             title={!form.y ? "需先选择年份" : keywordMode ? undefined : "仅关键字搜索时可用"}
             className={SELECT_CLASS}

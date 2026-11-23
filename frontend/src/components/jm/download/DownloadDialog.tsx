@@ -156,6 +156,9 @@ export function JmDownloadDialog({
   }, []);
 
   const allSelected = episodeList.length > 0 && selected.size === episodeList.length;
+  /** 已有归档将被覆盖,但本次只勾了部分章节 → 覆盖会让归档里只剩这些章 */
+  const partialOverwrite =
+    !!conflict && episodeList.length > 0 && selected.size > 0 && selected.size < episodeList.length;
 
   const handleStart = useCallback(
     async (overwrite = false) => {
@@ -278,6 +281,16 @@ export function JmDownloadDialog({
                       </p>
                       <p className="mt-0.5 break-all text-[11px] leading-relaxed text-muted">
                         继续下载会覆盖书库里的这一份(页数/大小随新文件刷新),不会新增重复条目。
+                        {partialOverwrite && (
+                          <>
+                            {" "}
+                            <span className="font-medium text-amber-500">
+                              本次只勾选了 {selected.size}/{episodeList.length} 章,覆盖后归档里就只剩这
+                              {" "}
+                              {selected.size} 章,原有其余章节会被删掉。
+                            </span>
+                          </>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -413,7 +426,9 @@ export function JmDownloadDialog({
                 {conflict
                   ? isBatch
                     ? `覆盖并下载 ${batch!.length} 部`
-                    : "覆盖并下载"
+                    : partialOverwrite
+                      ? `覆盖(仅保留 ${selected.size} 章)`
+                      : "覆盖并下载"
                   : isBatch
                     ? `开始下载 ${batch!.length} 部`
                     : "开始下载"}

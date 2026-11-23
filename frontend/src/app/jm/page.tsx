@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bookmark,
+  CalendarCheck,
   CalendarDays,
   ChevronRight,
   Coins,
@@ -27,6 +28,7 @@ import {
   Tag,
 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
+import { SheetBody, SheetHeader, SheetOverlay, sheetCardClass } from "@/components/Sheet";
 import { JmDownloadTasksButton } from "@/components/jm/download/DownloadTasks";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicCard } from "@/components/jm/ComicCard";
@@ -41,6 +43,7 @@ import type {
   JmPromoteSection,
   JmSerializationDay,
   JmSerializationType,
+  JmSignStatus,
   JmWeekCategory,
 } from "@/lib/jm/types";
 
@@ -49,7 +52,9 @@ const TABS = [
   { key: "latest", label: "最新" },
   { key: "weekly", label: "每周热门" },
   { key: "serialization", label: "连载表" },
-] as const;type TabKey = (typeof TABS)[number]["key"];
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
 
 const WEEK_DAYS: { value: JmSerializationDay; label: string }[] = [
   { value: 1, label: "周一" },
@@ -121,8 +126,10 @@ function HomeContent() {
     <div>
       <UserCard />
 
-      {/* 标签切换 */}
-      <div className="mb-5 flex flex-wrap items-center gap-2">
+      {/* 标签切换
+       * 不做 sticky:祖先(AppShell / animate-page-enter)都带 overflow-x-hidden,
+       * 会把祖先变成滚动容器,sticky 反而永远不触发。首屏改由「压缩用户卡」保证。 */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {TABS.map((tab) => (
           <button
             key={tab.key}
@@ -158,123 +165,163 @@ function HomeContent() {
   );
 }
 
-/* ── 顶部用户卡(登录态由 JmGate 保证) ── */
+/* ── 顶部用户卡(登录态由 JmGate 保证) ──
+ * 首屏优先:用户卡压成**单行**(头像 + 名字/等级 + 三个数值 + 快捷入口),
+ * 签到从整月日历收成右侧角标按钮(点开底部抽屉),让第一行封面出现在折叠线以上。 */
 
 function UserCard() {
   const { userInfo } = useJmSession();
+  const [signOpen, setSignOpen] = useState(false);
+  const [signStatus, setSignStatus] = useState<JmSignStatus | null>(null);
   if (!userInfo) return null;
 
   const avatarUrl = resolveJmUrl(userInfo.avatarUrl);
   const initial = (userInfo.username || "?").trim().charAt(0).toUpperCase() || "?";
 
+  const quickLinks = [
+    { href: "/jm/search", icon: Search, label: "搜索" },
+    // 与标签栏的「每周热门」(周排行 mv_w)区分:这里进的是「每周必看」期数页
+    { href: "/jm/week", icon: CalendarDays, label: "每周必看" },
+    { href: "/jm/favorites", icon: Bookmark, label: "收藏" },
+    { href: "/jm/tags", icon: Tag, label: "标签" },
+    { href: "/jm/history", icon: History, label: "历史" },
+  ];
+
   return (
-    <section className="mb-6 rounded-xl border border-border bg-card p-4 sm:p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-        <div className="flex min-w-0 flex-1 items-center gap-4">
+    <section className="mb-4 rounded-xl border border-border bg-card px-3 py-2.5 sm:px-4">
+      <div className="flex items-center gap-3">
+        {/* 头像 + 名字/等级 */}
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
           {avatarUrl ? (
             <img
               src={avatarUrl}
               alt={userInfo.username}
               loading="lazy"
-              className="h-14 w-14 shrink-0 rounded-full object-cover ring-1 ring-border"
+              className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-border"
             />
           ) : (
-            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent/15 text-lg font-semibold text-accent">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-base font-semibold text-accent">
               {initial}
             </span>
           )}
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-base font-semibold text-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-semibold text-foreground">
                 {userInfo.username}
               </span>
               {userInfo.vip && (
-                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-500">
+                <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500">
                   VIP
                 </span>
               )}
-              <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+              <span className="shrink-0 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
                 Lv.{userInfo.level}
-                {userInfo.levelName ? ` · ${userInfo.levelName}` : ""}
               </span>
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-              <span className="flex items-center gap-1">
+            {/* 数值压成一行小字,省掉原来的三行换行 */}
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0 text-[11px] text-muted">
+              <span className="flex items-center gap-0.5">
                 <Heart className="h-3 w-3" />
-                收藏 {userInfo.favorites}/{userInfo.canFavorites}
+                {userInfo.favorites}/{userInfo.canFavorites}
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-0.5">
                 <Coins className="h-3 w-3" />
-                金币 {formatCount(userInfo.coin)}
+                {formatCount(userInfo.coin)}
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-0.5">
                 <Sparkles className="h-3 w-3" />
-                经验 {formatCount(userInfo.exp)}
+                {formatCount(userInfo.exp)}
               </span>
-            </div>
+            </p>
           </div>
         </div>
 
-        {/* 二级页快捷入口:搜索 / 每周必看 / 我的收藏 / 标签收藏 / 阅读历史 */}
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Link
-            href="/jm/search"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-          >
-            <Search className="h-4 w-4" />
-            搜索
-          </Link>
-          <Link
-            href="/jm/week"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-          >
-            <CalendarDays className="h-4 w-4" />
-            每周必看
-          </Link>
-          <Link
-            href="/jm/favorites"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-          >
-            <Bookmark className="h-4 w-4" />
-            我的收藏
-          </Link>
-          <Link
-            href="/jm/tags"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-          >
-            <Tag className="h-4 w-4" />
-            标签收藏
-          </Link>
-          <Link
-            href="/jm/history"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm text-muted transition-colors hover:border-accent/50 hover:text-foreground"
-          >
-            <History className="h-4 w-4" />
-            阅读历史
-          </Link>
-        </div>
+        {/* 签到角标:未签到显示红点强调,已签到转为灰色勾 */}
+        <button
+          type="button"
+          onClick={() => setSignOpen(true)}
+          title={signStatus?.todaySigned ? "今日已签到 · 查看本月记录" : "每日签到"}
+          className={`relative inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+            signStatus?.todaySigned
+              ? "border-border bg-background text-muted hover:text-foreground"
+              : "border-accent/50 bg-accent/10 text-accent hover:bg-accent/15"
+          }`}
+        >
+          <CalendarCheck className="h-3.5 w-3.5" />
+          签到
+          {signStatus && !signStatus.todaySigned && (
+            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent ring-2 ring-card" />
+          )}
+        </button>
       </div>
 
-      {/* 每日签到日历 */}
-      <div className="mt-4 border-t border-border/60 pt-4">
-        <JmSignCalendar />
+      {/* 快捷入口压成一行可横滑 chips(手机上不再换行占三行) */}
+      <div className="-mx-1 mt-2 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {quickLinks.map(({ href, icon: Icon, label }) => (
+          <Link
+            key={href}
+            href={href}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </Link>
+        ))}
       </div>
+
+      {/* 签到抽屉:整月日历 + 签到按钮,只在点开时挂载(省首屏一次请求) */}
+      {signOpen && (
+        <SheetOverlay onClose={() => setSignOpen(false)}>
+          <div className={sheetCardClass} onClick={(e) => e.stopPropagation()}>
+            <SheetHeader
+              title={
+                <>
+                  <CalendarCheck className="h-4 w-4 shrink-0 text-accent" />
+                  每日签到
+                </>
+              }
+              onClose={() => setSignOpen(false)}
+            />
+            <SheetBody className="px-4 py-4">
+              <JmSignCalendar bare onStatus={setSignStatus} onSigned={() => setSignOpen(false)} />
+            </SheetBody>
+          </div>
+        </SheetOverlay>
+      )}
     </section>
   );
 }
 
-/* ── 会话级缓存:从二级页返回首页时命中缓存,不重新拉取上游数据 ── */
+/* ── 会话级缓存:从二级页返回首页时命中缓存,不重新拉取上游数据 ──
+ * 带 TTL:隔天再进来时不再拿昨天的推荐当"最新"(TTL 内返回首页仍是即时的)。 */
+
+/** 缓存有效期:10 分钟。超过即视为过期,切回该标签会重新拉取 */
+const HOME_TTL_MS = 10 * 60 * 1000;
+
 const homeTabCache: {
+  at?: number;
   sections?: JmPromoteSection[];
   latest?: { items: JmComicItem[]; page: number; hasNext: boolean; ended: boolean };
   weekly?: { items: JmComicItem[]; page: number; hasNext: boolean };
 } = {};
 
+/** 缓存是否仍在有效期内(无时间戳视为过期) */
+function cacheFresh(): boolean {
+  const at = homeTabCache.at;
+  return typeof at === "number" && Date.now() - at < HOME_TTL_MS;
+}
+
+/** 写入任意一格缓存时刷新时间戳,让整份缓存一起过期 */
+function touchHomeCache(): void {
+  homeTabCache.at = Date.now();
+}
+
 /* ── 推荐(#8 promote) ── */
 
 function RecommendTab({ onOpenSerialization }: { onOpenSerialization: () => void }) {
-  const [sections, setSections] = useState<JmPromoteSection[] | null>(() => homeTabCache.sections ?? null);
-  const [loading, setLoading] = useState(!homeTabCache.sections);
+  const initialCache = cacheFresh() ? homeTabCache.sections : undefined;
+  const [sections, setSections] = useState<JmPromoteSection[] | null>(() => initialCache ?? null);
+  const [loading, setLoading] = useState(!initialCache);
   const [error, setError] = useState<unknown>(null);
   const reqRef = useRef(0);
 
@@ -286,6 +333,7 @@ function RecommendTab({ onOpenSerialization }: { onOpenSerialization: () => void
       const data = await jmPromote();
       if (reqRef.current !== req) return;
       homeTabCache.sections = data.sections;
+      touchHomeCache();
       setSections(data.sections);
     } catch (err) {
       if (reqRef.current !== req) return;
@@ -296,9 +344,10 @@ function RecommendTab({ onOpenSerialization }: { onOpenSerialization: () => void
   }, []);
 
   useEffect(() => {
-    // 有会话级缓存时跳过首拉(返回首页不重新请求)
-    if (homeTabCache.sections) {
-      setSections(homeTabCache.sections);
+    // 缓存仍在有效期内时跳过首拉(返回首页不重新请求);过期则重新拉取
+    const cached = cacheFresh() ? homeTabCache.sections : undefined;
+    if (cached) {
+      setSections(cached);
       setLoading(false);
       return;
     }
@@ -380,7 +429,8 @@ function RecommendTab({ onOpenSerialization }: { onOpenSerialization: () => void
 /* ── 最新(#9 latest,分页加载) ── */
 
 function LatestTab() {
-  const cached = homeTabCache.latest;
+  // 缓存过期(隔天再进来)时当作没有缓存,重新拉第一页
+  const cached = cacheFresh() ? homeTabCache.latest : undefined;
   const [items, setItems] = useState<JmComicItem[]>(() => cached?.items ?? []);
   const [page, setPage] = useState(() => cached?.page ?? 0);
   const [hasNext, setHasNext] = useState(() => cached?.hasNext ?? true);
@@ -412,6 +462,7 @@ function LatestTab() {
         hasNext: data.hasNext,
         ended: !data.hasNext || data.list.length === 0,
       };
+      touchHomeCache();
       setItems(merged);
       if (!data.hasNext || data.list.length === 0) setEnded(true);
     } catch (err) {
@@ -426,7 +477,7 @@ function LatestTab() {
   }, []);
 
   useEffect(() => {
-    if (homeTabCache.latest) {
+    if (cacheFresh() && homeTabCache.latest) {
       setLoading(false);
       return;
     }
@@ -470,7 +521,8 @@ function LatestTab() {
 /* ── 每周热门(#13 search 的周排行 mv_w,对齐原应用板块) ── */
 
 function WeeklyTab() {
-  const cached = homeTabCache.weekly;
+  // 缓存过期(隔天再进来)时当作没有缓存,重新拉第一页
+  const cached = cacheFresh() ? homeTabCache.weekly : undefined;
   const [items, setItems] = useState<JmComicItem[]>(() => cached?.items ?? []);
   const [page, setPage] = useState(() => cached?.page ?? 0);
   const [hasNext, setHasNext] = useState(() => cached?.hasNext ?? true);
@@ -496,6 +548,7 @@ function WeeklyTab() {
       const merged =
         nextPage === 1 ? data.list : [...(homeTabCache.weekly?.items ?? []), ...data.list];
       homeTabCache.weekly = { items: merged, page: nextPage, hasNext: data.hasNext };
+      touchHomeCache();
       setItems(merged);
     } catch (err) {
       if (reqRef.current !== req) return;
@@ -509,7 +562,7 @@ function WeeklyTab() {
   }, []);
 
   useEffect(() => {
-    if (homeTabCache.weekly) {
+    if (cacheFresh() && homeTabCache.weekly) {
       setLoading(false);
       return;
     }

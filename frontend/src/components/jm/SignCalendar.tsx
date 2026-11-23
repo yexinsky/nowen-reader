@@ -20,7 +20,18 @@ import { useToast } from "@/components/Toast";
 /** 周一为一周起点 */
 const WEEK_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
-export function JmSignCalendar() {
+export function JmSignCalendar({
+  onSigned,
+  onStatus,
+  bare = false,
+}: {
+  /** 签到成功回调(外部角标按钮据此刷新「已签到」态) */
+  onSigned?: () => void;
+  /** 状态回调(每次拉到签到状态时触发,外部角标据此显示是否已签到) */
+  onStatus?: (status: JmSignStatus | null) => void;
+  /** true = 去掉外卡片边框/内边距,供 Sheet 等已带容器的地方内嵌 */
+  bare?: boolean;
+} = {}) {
   const toast = useToast();
   const [status, setStatus] = useState<JmSignStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,13 +46,14 @@ export function JmSignCalendar() {
       if (signal?.aborted) return;
       setStatus(s);
       setError(null);
+      onStatus?.(s);
     } catch (err) {
       if (signal?.aborted) return;
       setError(err instanceof Error ? err.message : "签到状态加载失败");
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, []);
+  }, [onStatus]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -60,12 +72,13 @@ export function JmSignCalendar() {
       setMsg(text);
       toast.success(text);
       await load();
+      onSigned?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "签到失败,请稍后重试");
     } finally {
       setSigning(false);
     }
-  }, [signing, toast, load]);
+  }, [signing, toast, load, onSigned]);
 
   const now = new Date();
   const year = now.getFullYear();
@@ -91,7 +104,13 @@ export function JmSignCalendar() {
   const todaySigned = status?.todaySigned ?? false;
 
   return (
-    <div className="w-full max-w-[300px] rounded-xl border border-border/60 bg-card p-4">
+    <div
+      className={
+        bare
+          ? "w-full"
+          : "w-full max-w-[300px] rounded-xl border border-border/60 bg-card p-4"
+      }
+    >
       {/* 标题行 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

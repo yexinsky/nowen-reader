@@ -70,7 +70,18 @@ function isActive(status: string): boolean {
 
 /* ── 单任务卡片 ── */
 
-function TaskCard({ task, onCancel, onRemove }: { task: JmDownloadTask; onCancel: () => void; onRemove: () => void }) {
+function TaskCard({
+  task,
+  onCancel,
+  onRemove,
+  highlighted = false,
+}: {
+  task: JmDownloadTask;
+  onCancel: () => void;
+  onRemove: () => void;
+  /** 详情页打开时:本作任务加高亮环,一眼区分于其他漫画的任务 */
+  highlighted?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { percent, text } = taskProgress(task);
   const failedChapters = task.chapters.filter((c) => c.state === "failed");
@@ -85,7 +96,11 @@ function TaskCard({ task, onCancel, onRemove }: { task: JmDownloadTask; onCancel
           : "text-accent";
 
   return (
-    <div className="rounded-lg border border-border/60 bg-background p-3">
+    <div
+      className={`rounded-lg border bg-background p-3 ${
+        highlighted ? "border-accent/50 ring-1 ring-accent/20" : "border-border/60"
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-foreground" title={task.title || task.aid}>
@@ -206,13 +221,22 @@ function TaskCard({ task, onCancel, onRemove }: { task: JmDownloadTask; onCancel
 
 /* ── 任务面板 ── */
 
-export function JmDownloadTasksPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function JmDownloadTasksPanel({
+  open,
+  onClose,
+  highlightAid,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** 详情页传当前作品 aid:该作品的任务置顶并高亮,其余按状态排序 */
+  highlightAid?: string;
+}) {
   const { tasks, activeCount } = useJmDownloadCenter();
 
-  const sorted = useMemo(
-    () => [...tasks].sort((a, b) => Number(isActive(b.status)) - Number(isActive(a.status))),
-    [tasks]
-  );
+  const sorted = useMemo(() => {
+    const rank = (t: JmDownloadTask) => (t.aid === highlightAid ? -1 : isActive(t.status) ? 0 : 1);
+    return [...tasks].sort((a, b) => rank(a) - rank(b));
+  }, [tasks, highlightAid]);
 
   if (!open) return null;
 
@@ -242,6 +266,7 @@ export function JmDownloadTasksPanel({ open, onClose }: { open: boolean; onClose
               <TaskCard
                 key={task.id}
                 task={task}
+                highlighted={!!highlightAid && task.aid === highlightAid}
                 onCancel={() => void cancelJmDownload(task.id)}
                 onRemove={() => void removeJmDownload(task.id)}
               />
