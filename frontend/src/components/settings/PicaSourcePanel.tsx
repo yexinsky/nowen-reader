@@ -132,6 +132,11 @@ export function PicaSourcePanel() {
 
   const handleSaveProxy = async () => {
     if (savingProxy || !settings) return;
+    // 代理必填:在线源不允许直连,前后端都不接受空值
+    if (!proxyInput.trim()) {
+      setSettingsError("代理不能为空:哔咔必须经代理访问,不支持直连");
+      return;
+    }
     setSavingProxy(true);
     try {
       await saveSettings({ proxy: proxyInput.trim() });
@@ -281,15 +286,16 @@ export function PicaSourcePanel() {
         </div>
         <div className="px-4 py-4">
           <p className="mb-2 text-xs leading-relaxed text-muted">
-            上游 picaapi.picacomic.com 不可直连时配置 HTTP 代理(如 http://127.0.0.1:7890);
-            留空为直连。哔咔上游按 TLS 指纹风控,服务端已内置浏览器指纹模拟,无需额外配置。
+            <span className="font-medium text-foreground">代理必填</span>
+            :哔咔必须经代理访问,不支持直连(直连会把服务器 IP 暴露给源站)。填 HTTP 或 socks5 代理,
+            如 http://127.0.0.1:7890。哔咔上游按 TLS 指纹风控,服务端已内置浏览器指纹模拟,无需额外配置。
           </p>
           <div className="flex gap-2">
             <input
               type="text"
               value={proxyInput}
               onChange={(e) => setProxyInput(e.target.value)}
-              placeholder="http://127.0.0.1:7890(留空直连)"
+              placeholder="http://127.0.0.1:7890"
               spellCheck={false}
               className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted/60 focus:border-accent"
             />

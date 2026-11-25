@@ -138,10 +138,13 @@ export interface PicaCommentPage {
 
 /** 服务端设置 */
 export interface PicaSettings {
+  /** 上游代理(必填):在线源必须经代理访问,不支持直连 */
   proxy: string;
   imageQuality: "original" | "low" | "medium" | "high";
   downloadDir: string;
   downloadTags: boolean;
+  /** 在线源必须经代理(服务端下发,恒为 true),前端据此把代理输入框当必填项 */
+  proxyRequired?: boolean;
 }
 
 /** 阅读历史条目(阅读单元 = 章节 order) */

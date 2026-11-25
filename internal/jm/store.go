@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 // 本地持久化(schema 与 Python 版 store.py 一致,history.json/settings.json 可互迁):
@@ -31,6 +33,10 @@ type Settings struct {
 }
 
 // DefaultProxy 默认上游代理(Python 版 JM_PROXY 默认值)。
+//
+// JM 与哔咔一律不允许直连(规则见 internal/proxyguard):设置里留空不再表示「直连」,
+// 而是回退到 JM_UPSTREAM_PROXY 环境变量,再回退到这里的默认值;三者都为空则视为
+// 未配置,出网请求会被拦下并提示去设置页填写代理。
 const DefaultProxy = "http://127.0.0.1:10809"
 
 func normalizeQuality(q string) string {
@@ -64,9 +70,12 @@ func atomicWrite(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// LoadSettings 读设置;proxy 为 null/缺省时回退 JM_PROXY(env)再回退默认值。
+// LoadSettings 读设置;proxy 为 null/缺省/空串时回退 JM_UPSTREAM_PROXY(env)再回退默认值。
 // downloadTags 缺省(旧 settings.json 无该键)为 true。
 // startFromFirstPage 缺省为 false(保持「按记录续读」的历史行为)。
+//
+// 空串不再表示「直连」:在线源必须经代理(见 internal/proxyguard),空值一律继续回退,
+// 最终仍为空则视为未配置,由客户端在出网时拦下并提示。
 func (s *Store) LoadSettings(envProxy string) Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,7 +93,8 @@ func (s *Store) LoadSettings(envProxy string) Settings {
 	}
 	out := def
 	if v, ok := disk["proxy"].(string); ok {
-		out.Proxy = v // 空串 = 直连(显式清除)
+		// 落盘空串(旧版「清除代理=直连」留下的)不再生效,继续用 env/默认值
+		out.Proxy = proxyguard.Resolve(v, envProxy, DefaultProxy)
 	}
 	if v, ok := disk["imageQuality"].(string); ok {
 		out.ImageQuality = normalizeQuality(v)

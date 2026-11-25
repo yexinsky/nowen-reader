@@ -32,6 +32,8 @@ import (
 	fhttp "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 // parseURLLoose 宽松 URL 解析(白名单/诊断用)。
@@ -55,8 +57,15 @@ type Client struct {
 	imageQuality string
 }
 
-// NewClient 构建绑定 proxy(空=直连)与画质(空=original)的上游客户端。
+// NewClient 构建绑定 proxy 与画质(空=original)的上游客户端。
+//
+// proxy 必填:哔咔与 JM 一样一律不允许直连(见 internal/proxyguard)。空代理不再
+// 表示「直连」,而是直接返回错误 —— 这样即便上层漏判,也不会有请求从服务器
+// 公网 IP 直连到源站。
 func NewClient(proxy, imageQuality string) (*Client, error) {
+	if err := proxyguard.Validate(proxy); err != nil {
+		return nil, err
+	}
 	hc, err := newTLSHTTPClient(proxy)
 	if err != nil {
 		return nil, err
@@ -67,15 +76,13 @@ func NewClient(proxy, imageQuality string) (*Client, error) {
 	return &Client{hc: hc, proxyKey: proxy, imageQuality: imageQuality}, nil
 }
 
-// newTLSHTTPClient Chrome 指纹 + HTTP/2 + 代理(空=直连)的 HTTP 客户端。
+// newTLSHTTPClient Chrome 指纹 + HTTP/2 + 代理 的 HTTP 客户端。
 // 默认跟随重定向(图片 URL 含 /static/tobeimg 时上游 301 到 img.* 域名)。
 func newTLSHTTPClient(proxy string) (tls_client.HttpClient, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithClientProfile(profiles.Chrome_133),
 		tls_client.WithTimeoutSeconds(upstreamTimeoutSecs),
-	}
-	if proxy != "" {
-		opts = append(opts, tls_client.WithProxyUrl(proxy))
+		tls_client.WithProxyUrl(proxy),
 	}
 	return tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
 }

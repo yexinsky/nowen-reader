@@ -55,7 +55,7 @@
 | `1002` | token 无效/过期 | **401** | — | 任何 🔒 端点缺头/格式错/会话不存在 |
 | `1003` | 需要验证码 | 200 | `captchaRequired: true` | 登录时上游/mock 要求验证码 |
 | `2001` | JM 服务端返回错误 | 200 | `upstream`（原始信息截断） | 上游业务失败/解密失败/图片解码失败等 |
-| `2002` | 网络不可达/超时 | 200 | `reason` | 网络关键字命中（timeout/Connection/Proxy/SSL/DNS…） |
+| `2002` | 网络不可达/超时 | 200 | `reason` | 网络关键字命中（timeout/Connection/Proxy/SSL/DNS…）；**未配置代理时也走此码，并带 `proxyRequired: true`** |
 | `3001` | 资源不存在 | 200 | — | 漫画/章节不存在、图片 path 非法、mock 收藏对象不存在 |
 | `4000` | 内部错误 | 200 | —（data=null） | 未捕获异常兜底（msg=异常信息截断 300 字符） |
 
@@ -82,7 +82,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
 | `JM_MOCK` | 未设置 | `1` 启用 Mock |
-| `JM_PROXY` | `http://127.0.0.1:10809` | 上游代理；显式空串 = 直连；运行期可经 `PUT /api/settings` 修改 |
+| `JM_PROXY` / `JM_UPSTREAM_PROXY` | `http://127.0.0.1:10809` | 上游代理，**必填，不支持直连**（Go 实现读 `JM_UPSTREAM_PROXY`）；留空/缺省时回退环境变量再回退默认值，仍为空则视为未配置、请求直接失败。运行期可经 `PUT /api/settings` 修改，但**不接受空串**（422） |
 | `JM_DATA_DIR` | `mobile/server/data` | history/settings 持久化目录 |
 | `JM_PORT` | `8964` | 服务端口 |
 | `JM_DOCS` | 开启 | `0`/`false`/`no`/`off` 时关闭 `/api-docs` |
@@ -542,9 +542,10 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 
 - **鉴权**：Bearer。
 - **请求**：无参数。
-- **响应 `data`**：`{ "proxy": "http://127.0.0.1:10809", "imageQuality": "high", "mock": false }`
-  - 默认值：`proxy` 取 `JM_PROXY`（未设置 → `http://127.0.0.1:10809`）；`imageQuality` 默认 `high`。
+- **响应 `data`**：`{ "proxy": "http://127.0.0.1:10809", "imageQuality": "high", "mock": false, "proxyRequired": true }`
+  - 默认值：`proxy` 取 `JM_PROXY` / `JM_UPSTREAM_PROXY`（未设置 → `http://127.0.0.1:10809`）；`imageQuality` 默认 `high`。
   - **旧版遗留画质值（如 `"original"`）读取时归一化为 `high`**（保证档位恒合法）；`mock` 恒反映当前运行模式。
+  - `proxyRequired` 恒为 `true`：在线源必须经代理，前端据此把代理输入框当必填项。
 - **错误**：`1002`/401。
 - **mock/live 差异**：无（同一存储；`mock` 字段随模式变化）。
 - **上游映射**：无。
@@ -554,9 +555,9 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 
 - **鉴权**：Bearer。
 - **请求体**（`SettingsPutRequest`，字段均可选）：`{ "proxy": "str?", "imageQuality": "high|medium|low"? }`
-  - `imageQuality` 为 Literal 枚举，其他值 → 422；`proxy` 传 **空串 = 清除代理**（直连）。
+  - `imageQuality` 为 Literal 枚举，其他值 → 422；`proxy` 为**必填项**：传空串或非法地址 → `422`（在线源必须经代理，不支持直连，规则见 `docs/CONFIGURATION.md`）。
   - `threadNum` 等旧字段被**静默忽略**（不报错、不落盘，v1.0.3 移除）。
-- **响应 `data`**：同 GET（写入后的完整设置）。
+- **响应 `data`**：同 GET（写入后的完整设置，含 `proxyRequired: true`）。
 - **错误**：`1002`/401；`422`。
 - **mock/live 差异**：live 模式下 `proxy` 变更**即时生效**：`BACKEND.invalidate()` 重建匿名上游客户端；已登录会话客户端在下次请求时惰性重建并搬运 cookies（保持登录态）。mock 模式无上游，无此动作。
 - **上游映射**：无直接调用；间接决定 live 所有上游请求与图片下载的代理，以及 `/api/image` 落盘画质（缓存键已含画质）。

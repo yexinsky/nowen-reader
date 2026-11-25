@@ -61,6 +61,7 @@ func (s *Service) ImageCache() *ImageCache {
 }
 
 // ImageHTTPClient 图片下载客户端(代理取自设置;代理变更自动重建)。
+// 图片与 API 同一套强制代理策略:没有可用代理时所有图片请求都会被拦下。
 func (s *Service) ImageHTTPClient() *http.Client {
 	proxy := s.Settings().Proxy
 	s.imgMu.Lock()

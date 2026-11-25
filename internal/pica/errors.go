@@ -3,6 +3,8 @@ package pica
 import (
 	"strconv"
 	"strings"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 // Pica 错误码(沿用 JM 契约语义,前端同一套 UX:1002→清会话跳登录、2002→提示配代理)。
@@ -52,6 +54,20 @@ func errUnauthorized() *APIError {
 	return &APIError{Code: CodeUnauthorized, Msg: "登录已失效,请重新登录"}
 }
 
+// errProxyRequired 上游代理缺失/不可用。哔咔与 JM 一律不允许直连(见 internal/proxyguard),
+// 未配置代理时用 2002 报出可操作的提示,而不是让它退化成一堆笼统的网络错误。
+func errProxyRequired(err error) *APIError {
+	msg := proxyguard.ErrMissing.Error()
+	if m := proxyguard.Message(err); m != "" {
+		msg = m
+	}
+	return &APIError{
+		Code: CodeNetwork,
+		Msg:  msg,
+		Data: map[string]any{"reason": err.Error(), "proxyRequired": true},
+	}
+}
+
 // errSuspiciousFakeResponse 上游静默投喂假响应的显式报错(绝不把假数据当真数据用):
 // 实测上游对非 okhttp TLS 指纹返回 {"code":200,"message":"success"} 且无 data 字段。
 func errSuspiciousFakeResponse() *APIError {
@@ -79,13 +95,18 @@ func ClassifyError(err error, defaultMsg string) *APIError {
 }
 
 // classifyUpstreamError 将任意错误映射为 APIError:
-// *APIError 直通 → 登录语义 → 网络关键字 → 上游兜底。
+// 代理拦截 → *APIError 直通 → 登录语义 → 网络关键字 → 上游兜底。
 func classifyUpstreamError(err error, defaultMsg string) *APIError {
 	if err == nil {
 		return nil
 	}
 	if apiErr, ok := err.(*APIError); ok {
 		return apiErr
+	}
+	// 代理缺失/不可用优先判定:这类错误的文本里常含 "proxy" 等网络关键字,
+	// 若落到下面的关键字分支会被报成笼统的「网络不可达」,用户不知道该去填代理。
+	if proxyguard.IsBlocked(err) {
+		return errProxyRequired(err)
 	}
 	text := err.Error()
 	if hasLoginSemantics(text) {

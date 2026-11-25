@@ -19,6 +19,35 @@ English · [简体中文](./CONFIGURATION.md)
 | `PUID` / `PGID` | `1001` / `1001` | UID / GID of the in-container process (for bind-mount permission) |
 | `UMASK` | `0002` | Permission mask for files/directories created in Docker; `0002` is suitable for group-writable NAS/shared folders |
 | `PERMISSION_FIX_MODE` | `auto` | Docker startup permission repair mode: `auto` repairs automatically, `relaxed` falls back to broader permissions when NAS/SMB/NFS cannot `chown`, `off` only checks writability |
+| `JM_UPSTREAM_PROXY` | `http://127.0.0.1:10809` | Upstream proxy for JM (online manga); takes precedence over the value saved in the settings page. **Required, see below** |
+| `PICA_UPSTREAM_PROXY` | `http://127.0.0.1:10809` | Upstream proxy for PicACG; takes precedence over the value saved in the settings page. **Required, see below** |
+
+## Online Sources Must Go Through a Proxy (No Direct Connections)
+
+**The JM (online manga) and PicACG modules must always go through a proxy. Direct connections are not an option.**
+
+This is a hard constraint enforced by the server:
+
+- The proxy field in the settings page is **required**; saving it empty is rejected (`422`, "upstream proxy not configured…").
+- The old "clear the proxy = go direct" semantics is **gone**. If a legacy `settings.json` still holds an empty string, it falls back to `JM_UPSTREAM_PROXY` / `PICA_UPSTREAM_PROXY`, then to the default `http://127.0.0.1:10809`. When none of them is set, the proxy is considered **missing** and the affected requests fail outright instead of silently degrading to a direct connection.
+- Without a proxy, content endpoints return `2002` with `data.proxyRequired = true` and a message pointing at the settings page, rather than a generic "network unreachable".
+- The image pipeline (thumbnails / chapter image proxying) follows the same rule: with no usable proxy, image requests are blocked too.
+
+Why:
+
+1. A direct connection exposes the server's public IP to the upstream, and source-site risk control will cut the whole link off;
+2. Once some requests go through the proxy and some leak out directly, the failure looks intermittent and is far more expensive to debug than simply refusing to connect;
+3. The upstream already blocks some regions outright, so a proxy is the precondition for stable access.
+
+Supported schemes: `http://`, `https://`, `socks5://`, `socks5h://`. `socks5h://` is recommended — DNS is resolved on the proxy side, so local resolution does not leak.
+
+```yaml
+environment:
+  - JM_UPSTREAM_PROXY=socks5h://192.168.5.196:1070
+  - PICA_UPSTREAM_PROXY=socks5h://192.168.5.196:1070
+```
+
+> Environment variables take precedence over values saved in the settings page. When configured that way, the settings page shows the address actually in effect.
 
 ## Subpath Deployment
 

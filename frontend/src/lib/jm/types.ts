@@ -213,6 +213,7 @@ export interface JmHistoryReport {
 export type JmImageQuality = "high" | "medium" | "low";
 
 export interface JmSettings {
+  /** 上游代理(必填):在线源必须经代理访问,不支持直连 */
   proxy: string;
   imageQuality: JmImageQuality;
   /** 批量下载默认归档目录(书库管理中的目录;空 = 用内置测试目录) */
@@ -221,6 +222,8 @@ export interface JmSettings {
   downloadTags: boolean;
   /** 阅读器进章节一律从第 1 页开始,忽略服务端记录的续读页(默认关) */
   startFromFirstPage: boolean;
+  /** 在线源必须经代理(服务端下发,恒为 true),前端据此把代理输入框当必填项 */
+  proxyRequired?: boolean;
   mock: boolean;
 }
 

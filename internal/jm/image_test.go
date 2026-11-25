@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 /* ── path 白名单(契约 #16 备注) ── */
@@ -397,8 +399,27 @@ func TestDownloadAndDecodeErrors(t *testing.T) {
 
 	// 上游不可达(域名不存在) → 2002 网络
 	t.Setenv("JM_IMAGE_DOMAINS", "127.0.0.1:1") // 连接拒绝
-	_, _, err = DownloadAndDecode(context.Background(), NewImageHTTPClient(""), cache, "media/photos/1/1.jpg", "0", "", "high")
+	// 代理必填:传一个格式合法但连不通的代理,保留「连接失败 → 2002」语义
+	// (传空串会被 proxyguard 直接拦下,测不到网络分支)。
+	_, _, err = DownloadAndDecode(context.Background(), NewImageHTTPClient("http://127.0.0.1:1"), cache, "media/photos/1/1.jpg", "0", "", "high")
 	if apiErr, ok := err.(*APIError); !ok || apiErr.Code != CodeNetwork {
 		t.Fatalf("连接拒绝应映射 2002, got %v", err)
+	}
+}
+
+// TestNewImageHTTPClientRequiresProxy 图片管线与 API 同一条硬规则:
+// 没有可用代理时,任何图片请求都必须被拦下,不允许从公网 IP 直连。
+func TestNewImageHTTPClientRequiresProxy(t *testing.T) {
+	client := NewImageHTTPClient("")
+	_, err := client.Get("https://example.invalid/a.jpg")
+	if err == nil {
+		t.Fatal("未配置代理时图片请求必须失败")
+	}
+	if !proxyguard.IsBlocked(err) {
+		t.Fatalf("应被识别为代理拦截,实际 %v", err)
+	}
+	// 分类器要把它报成「去配代理」而不是笼统的网络错误
+	if apiErr := classifyUpstreamError(err, "图片下载失败"); apiErr.Code != CodeNetwork || apiErr.Data["proxyRequired"] != true {
+		t.Fatalf("代理拦截应映射为 2002 且带 proxyRequired, got %+v", apiErr)
 	}
 }

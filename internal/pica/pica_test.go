@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 // 签名向量由 Python(api_test.py 同款 HMAC-SHA256)独立生成,交叉验证 Go 实现:
@@ -290,10 +292,14 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
-	// 默认设置:直连(env 为空)+ original + downloadTags 开
+	// 默认设置:代理回退到默认地址(在线源不允许直连)+ original + downloadTags 开
 	def := s.LoadSettings("")
-	if def.Proxy != "" || def.ImageQuality != "original" || !def.DownloadTags {
+	if def.Proxy != proxyguard.DefaultAddress || def.ImageQuality != "original" || !def.DownloadTags {
 		t.Fatalf("默认设置不符: %+v", def)
+	}
+	// 旧版「清除直连」留下的空串不再生效,仍回退到默认地址
+	if got := NewStore(t.TempDir()).LoadSettings("").Proxy; got != proxyguard.DefaultAddress {
+		t.Fatalf("空落盘值应回退默认代理: %q", got)
 	}
 	// env 代理回退:落盘值缺省时使用 env
 	if got := NewStore(t.TempDir()).LoadSettings("http://127.0.0.1:5070").Proxy; got != "http://127.0.0.1:5070" {

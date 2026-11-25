@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 // Settings 服务端设置(GET/PUT /api/pica/settings 契约)。
@@ -56,13 +58,20 @@ func atomicWrite(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// LoadSettings 读设置;proxy 缺省为空串(直连),env 覆盖由 Service 层处理。
+// LoadSettings 读设置;proxy 缺省/为空串时回退 PICA_UPSTREAM_PROXY(env)再回退默认值。
 // downloadTags 缺省(旧 settings.json 无该键)为 true。
 // envProxy:PICA_UPSTREAM_PROXY 环境变量(落盘值缺省时回退,与 JM 流语义一致)。
+//
+// 空串不再表示「直连」:哔咔与 JM 一律必须经代理(见 internal/proxyguard),
+// 空值一律继续回退,最终仍为空则视为未配置,由客户端在出网时拦下并提示。
 func (s *Store) LoadSettings(envProxy string) Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := Settings{Proxy: envProxy, ImageQuality: "original", DownloadTags: true}
+	out := Settings{
+		Proxy:        proxyguard.Resolve("", envProxy, proxyguard.DefaultAddress),
+		ImageQuality: "original",
+		DownloadTags: true,
+	}
 	raw, err := os.ReadFile(s.settingsPath())
 	if err != nil {
 		return out
@@ -72,7 +81,8 @@ func (s *Store) LoadSettings(envProxy string) Settings {
 		return out
 	}
 	if v, ok := disk["proxy"].(string); ok {
-		out.Proxy = v // 空串 = 直连(显式清除)
+		// 落盘空串(旧版「清除代理=直连」留下的)不再生效,继续用 env/默认值
+		out.Proxy = proxyguard.Resolve(v, envProxy, proxyguard.DefaultAddress)
 	}
 	if v, ok := disk["imageQuality"].(string); ok {
 		out.ImageQuality = normalizeQuality(v)

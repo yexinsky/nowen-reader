@@ -2,6 +2,8 @@ package jm
 
 import (
 	"strings"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 // JM 错误码(MOBILE_API.md §0.3,与 Python 版 core/errors.py 对齐)
@@ -56,6 +58,20 @@ func errUnauthorized() *APIError {
 	return &APIError{Code: CodeUnauthorized, Msg: "登录已失效,请重新登录"}
 }
 
+// errProxyRequired 上游代理缺失/不可用。JM 与哔咔一律不允许直连(见 internal/proxyguard),
+// 未配置代理时用 2002 报出可操作的提示,而不是让它退化成一堆笼统的网络错误。
+func errProxyRequired(err error) *APIError {
+	msg := proxyguard.ErrMissing.Error()
+	if m := proxyguard.Message(err); m != "" {
+		msg = m
+	}
+	return &APIError{
+		Code: CodeNetwork,
+		Msg:  msg,
+		Data: map[string]any{"reason": err.Error(), "proxyRequired": true},
+	}
+}
+
 // UpstreamDetail 提取上游错误详情(2001 的 data.upstream 字段),供服务端日志诊断;
 // 非上游错误或无详情返回空串。
 func UpstreamDetail(err error) string {
@@ -87,13 +103,18 @@ func hasLoginSemantics(text string) bool {
 }
 
 // classifyUpstreamError 将任意错误映射为 APIError(live.py _map_live_error 同序):
-// *APIError 直通 → 资源不存在语义 → 登录语义 → 上游错误 → 网络关键字 → 上游兜底。
+// 代理拦截 → *APIError 直通 → 资源不存在语义 → 登录语义 → 网络关键字 → 上游兜底。
 func classifyUpstreamError(err error, defaultMsg string) *APIError {
 	if err == nil {
 		return nil
 	}
 	if apiErr, ok := err.(*APIError); ok {
 		return apiErr
+	}
+	// 代理缺失/不可用优先判定:这类错误的文本里常含 "proxy" 等网络关键字,
+	// 若落到下面的关键字分支会被报成笼统的「网络不可达」,用户不知道该去填代理。
+	if proxyguard.IsBlocked(err) {
+		return errProxyRequired(err)
 	}
 	text := err.Error()
 	if strings.Contains(text, "MissingAlbumPhoto") || strings.Contains(text, "album/photo 不存在") {

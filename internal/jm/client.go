@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 const apiProt = "https://"
@@ -37,14 +39,28 @@ var (
 	sharedProxy atomic.Value // string:当前上游代理(空=直连);变更时各 Backend 重建客户端
 )
 
+// newHTTPClient 构建上游 API 的 HTTP 客户端。
+//
+// 代理是硬约束(JM 与哔咔一律不允许直连,见 internal/proxyguard):
+//   - 代理可用 → 走代理;
+//   - 代理为空/非法 → transport.Proxy 直接返回错误,任何请求都连不出去,
+//     错误经 errors.Is 识别后报成「请先配置代理」而不是笼统的网络错误。
+//
+// 这样即使上层漏判(例如历史遗留的空串设置),也不会有任何一个字节从服务器
+// 公网 IP 直连到上游站点。
 func newHTTPClient(proxy string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if proxy != "" {
-		if pu, err := url.Parse(proxy); err == nil && pu.Scheme != "" {
+	if err := proxyguard.Validate(proxy); err != nil {
+		blocked := err
+		transport.Proxy = func(*http.Request) (*url.URL, error) { return nil, blocked }
+	} else {
+		pu, parseErr := url.Parse(proxy)
+		if parseErr != nil {
+			blocked := proxyguard.ErrInvalid
+			transport.Proxy = func(*http.Request) (*url.URL, error) { return nil, blocked }
+		} else {
 			transport.Proxy = http.ProxyURL(pu)
 		}
-	} else {
-		transport.Proxy = nil
 	}
 	return &http.Client{
 		Transport: transport,
@@ -53,7 +69,8 @@ func newHTTPClient(proxy string) *http.Client {
 	}
 }
 
-// NewClient 构建绑定 proxy(空=直连)与 cookies(可空)的上游客户端。
+// NewClient 构建绑定 proxy 与 cookies(可空)的上游客户端。
+// proxy 必填:在线源不允许直连,空值会得到一个「所有请求都失败」的客户端。
 // 传入 map 一律拷贝:调用方(会话表)持有的同一 map 会被 save() 遍历,
 // 而客户端 bootstrap 会经 setCookie 写入,共享引用会构成并发读写。
 func NewClient(proxy string, cookies map[string]string) *Client {

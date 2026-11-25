@@ -15,13 +15,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
 
 func liveProxy() string {
 	if v := os.Getenv("PICA_LIVE_PROXY"); v != "" {
 		return v
 	}
-	return ""
+	// 在线源不允许直连:没有显式指定代理时用默认地址(通常连不通)
+	// —— 这样 playbook 里「忘了配代理」会直接失败,而不是悄悄从公网 IP 直连。
+	return proxyguard.DefaultAddress
 }
 
 func liveCreds(t *testing.T) (string, string) {

@@ -139,6 +139,8 @@ func registerPicaAuthRoutes(g *gin.RouterGroup) {
 		jmOK(c, gin.H{
 			"proxy": st.Proxy, "imageQuality": st.ImageQuality,
 			"downloadDir": st.DownloadDir, "downloadTags": st.DownloadTags,
+			// proxyRequired:在线源必须经代理,前端据此把代理输入框当必填项。
+			"proxyRequired": true,
 		})
 	})
 	g.PUT("/settings", func(c *gin.Context) {
@@ -155,7 +157,14 @@ func registerPicaAuthRoutes(g *gin.RouterGroup) {
 		svc := picaService()
 		st := svc.Settings()
 		if body.Proxy != nil {
-			st.Proxy = *body.Proxy // 空串 = 清除代理(直连)
+			// 在线源不允许直连(见 internal/proxyguard):空串不再等于「清除代理」,
+			// 直接拒绝 —— 否则用户以为关掉了代理,实际是把服务器 IP 暴露给源站。
+			proxy, detail := validateProxyInput(*body.Proxy)
+			if detail != "" {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{"detail": detail})
+				return
+			}
+			st.Proxy = proxy
 		}
 		if body.ImageQuality != nil {
 			if !pica.ValidImageQuality(*body.ImageQuality) {

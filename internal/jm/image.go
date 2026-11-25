@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/imgcache"
+	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 	_ "golang.org/x/image/webp" // image.Decode 注册 webp(x/image,首帧)
 )
 
@@ -88,15 +89,20 @@ const (
 	imageMaxBytes        = 64 << 20 // 单图体积保护上限
 )
 
-// NewImageHTTPClient 图片下载专用 HTTP 客户端(30s 超时;proxy 空=直连)。
+// NewImageHTTPClient 图片下载专用 HTTP 客户端(30s 超时)。
+//
+// 与 API 客户端同一套代理强制策略(见 internal/proxyguard):proxy 为空/非法时
+// transport.Proxy 直接返回错误,图片请求连不出去 —— 图片同样不允许直连。
 func NewImageHTTPClient(proxy string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if proxy != "" {
-		if pu, err := url.Parse(proxy); err == nil && pu.Scheme != "" {
-			transport.Proxy = http.ProxyURL(pu)
-		}
+	if err := proxyguard.Validate(proxy); err != nil {
+		blocked := err
+		transport.Proxy = func(*http.Request) (*url.URL, error) { return nil, blocked }
+	} else if pu, parseErr := url.Parse(proxy); parseErr != nil {
+		blocked := proxyguard.ErrInvalid
+		transport.Proxy = func(*http.Request) (*url.URL, error) { return nil, blocked }
 	} else {
-		transport.Proxy = nil
+		transport.Proxy = http.ProxyURL(pu)
 	}
 	return &http.Client{Transport: transport, Timeout: imageDownloadTimeout}
 }

@@ -177,11 +177,16 @@ export function JmSourcePanel() {
   }, [settings]);
 
   const saveProxy = async (proxy: string) => {
+    // 代理必填:在线源不允许直连,前后端都不接受空值
+    if (!proxy.trim()) {
+      toast.error("代理不能为空:在线漫画必须经代理访问,不支持直连");
+      return;
+    }
     setSavingProxy(true);
     try {
-      const next = await jmPutSettings({ proxy });
+      const next = await jmPutSettings({ proxy: proxy.trim() });
       setSettings(next);
-      toast.success(proxy ? "代理已保存(已生效)" : "代理已保存(已直连)");
+      toast.success("代理已保存(已生效)");
       // 保存后回调 health,反馈服务可达状态
       void checkHealth();
     } catch (err) {
@@ -454,22 +459,15 @@ export function JmSourcePanel() {
                   {savingProxy && <Loader2 className="h-4 w-4 animate-spin" />}
                   {savingProxy ? "保存中…" : "保存"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void saveProxy("")}
-                  disabled={savingProxy || proxyInput.trim() === ""}
-                  className="inline-flex h-10 items-center rounded-lg border border-border px-3 text-sm text-muted transition-colors hover:bg-card-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  清除(直连)
-                </button>
               </div>
             </div>
             <p className="text-xs text-muted">
-              保存后立即生效于内置服务;留空即直连。代理作用于内置服务的上游访问;
-              health 仅代表服务可达,上游连通性以实际浏览为准。
+              保存后立即生效于内置服务。<span className="font-medium text-foreground">代理必填</span>
+              :在线漫画必须经代理访问,不支持直连(直连会把服务器 IP 暴露给源站)。
             </p>
             <p className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-              Live 模式未配置代理将无法访问内容(Mock 模式不受影响)。
+              未配置代理时内容接口会直接报错而不会尝试直连;health 仅代表服务可达,
+              上游连通性以实际浏览为准。
             </p>
           </div>
         )}

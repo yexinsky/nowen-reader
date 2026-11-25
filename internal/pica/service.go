@@ -66,7 +66,7 @@ func (s *Service) APIClient() (*Client, error) {
 }
 
 // ImageHTTPClient 图片下载客户端(tls-client Chrome 指纹;代理变更重建;
-// 代理口径与 API 客户端一致:落盘值缺省回退 env,否则直连)。
+// 代理口径与 API 客户端一致:落盘值缺省回退 env,再回退默认值——不允许直连)。
 func (s *Service) ImageHTTPClient() (*Client, error) {
 	proxy := s.Settings().Proxy
 	s.imgMu.Lock()
