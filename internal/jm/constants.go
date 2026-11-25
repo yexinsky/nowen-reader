@@ -26,10 +26,15 @@ const (
 // 默认域名池(jm_config.py:145-168 的内置池;SDK 内置池会经动态更新服务替换,
 // 此处静态值已更新为实测可用域名作为更新失败时的兜底,顺序即优先级、失败轮换)。
 // 可用环境变量 JM_API_DOMAINS / JM_IMAGE_DOMAINS 覆盖(逗号分隔)。
+//
+// 维护说明:上游换域没有预告,死域名会返回 nginx 404 而非网络错误(现象是
+// "HTTP 404: <html>404 Not Found</html>")。2026-11-24 那一轮就是 www.cdnhjk.net /
+// www.cdngwc.cc 双双下线,旧静态池整组失效。修改前先用更新服务核对:
+// 经 JM_UPSTREAM_PROXY 拉 domainUpdateServers 的密文并用 apiDomainServerSecret 解密。
 var (
 	defaultAPIDomains = []string{
-		"www.cdnhjk.net",
-		"www.cdngwc.cc",
+		"www.cdnbtd.cc",
+		"www.cdnutc.cc",
 		"www.cdngwc.net",
 		"www.cdngwc.club",
 	}
@@ -57,10 +62,11 @@ const (
 	appXRequestedWith = "com.JMComic3.app"
 )
 
-// 上游请求超时与重试(对齐 live.py _build_option:timeout 25 / retry_times 1)
+// 上游请求超时(对齐 live.py _build_option:timeout 25 / retry_times 1)。
+// 域名轮换次数不在这里:改由 client.go 的 apiDomainTryLimit 按池大小决定
+// ——上游换域后死域名返回 nginx 404,只试两个位置翻不出剩下的可用域名。
 const (
 	upstreamTimeoutSecs = 25
-	upstreamRetryTimes  = 1 // 失败时换下一个域名再试一次
 )
 
 // 上游错误分类的网络关键字(live.py _map_live_error,一字不差)

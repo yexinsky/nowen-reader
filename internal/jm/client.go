@@ -18,7 +18,7 @@ import (
 const apiProt = "https://"
 
 // Client 是单个上游 API 客户端:绑定代理与 cookies(匿名客户端 cookies 为空)。
-// 请求头带 token/tokenparam;响应做 AES 解密;域名失败轮换(重试 upstreamRetryTimes 次)。
+// 请求头带 token/tokenparam;响应做 AES 解密;域名失效按池轮换(见 reqAPI)。
 type Client struct {
 	http     *http.Client
 	cookies  map[string]string
@@ -84,12 +84,16 @@ func (c *Client) currentAppVersion() string {
 }
 
 // ensureInit 客户端首次请求前的引导(SDK after_init 语义),每客户端仅一次:
-// ① 域名动态更新(进程级一次,失败标记 done 防重复执行);
+// ① 域名动态更新(进程级按 TTL 刷新,失败可重试,见 domains.go);
 // ② cookies 引导:cookies 为空时调 /setting 抓取 Set-Cookie(移动端必须携带,
 //    否则上游跳转"禁漫娘"页);失败静默,由后续请求按上游错误暴露。
+//
+// 注意:initOnce 只覆盖"客户端级一次性"的引导。域名池是进程级共享且会过期,
+// 因此每条出网路径在 ensureInit 之后还要再调一次 refreshAPIDomains ——
+// 它内部按 TTL/退避门控,绝大多数请求只是一次加锁 + 时间比较。
 func (c *Client) ensureInit(ctx context.Context) {
 	c.initOnce.Do(func() {
-		updateAPIDomains(ctx, c.http)
+		refreshAPIDomains(ctx, c.http)
 		if len(c.cookies) == 0 {
 			c.bootstrapCookies(ctx)
 		}
@@ -180,15 +184,34 @@ func mergeLoginCookies(jar map[string]string, respCookies []*http.Cookie, avs st
 // reqAPI 调用上游移动端 API:GET/POST 表单,响应 AES 解密为 JSON。
 // 返回 decoded 的原始 JSON 字节(通常为 {"code":200,...} 或业务对象)。
 // 业务失败(code!=200)返回 *APIError(2001/1001/1003);网络失败轮换域名重试后返回 2002。
+//
+// 域名轮换口径:上游换域后死域名返回的是 nginx 404(不是网络错误),旧实现按
+// attempt%len(domains) 只试 2 个位置,4 个域名的池子里剩两个可用也翻不出来。
+// 现在逐个试没试过的域名(上限 apiDomainTryLimit);一旦某个域名给出"域名级失效"
+// 信号,顺带刷新一次域名池,新拿到的域名会接着试(只刷新一次,避免死循环)。
 func (c *Client) reqAPI(ctx context.Context, method, path string, form url.Values) ([]byte, error) {
-	// SDK after_init 语义:首次请求前完成域名动态更新 + cookies 引导(均惰性、进程/客户端级一次)
+	// SDK after_init 语义:首次请求前完成 cookies 引导(惰性)
 	c.ensureInit(ctx)
-	domains := c.apiDomains()
+	// 域名池是进程级且会过期(上游换域无预告):每次出网前过一道 TTL 门控的刷新,
+	// 常驻进程不会因为"客户端早就 init 过了"而一直钉在旧池上。
+	refreshAPIDomains(ctx, c.http)
+
+	tried := make(map[string]bool, len(defaultAPIDomains))
+	refreshed := false
 	var lastErr error
-	for attempt := 0; attempt <= upstreamRetryTimes; attempt++ {
-		domain := domains[attempt%len(domains)]
-		endpoint := apiProt + domain + path
-		data, err := c.doAPIRequest(ctx, method, endpoint, form, "")
+	for len(tried) < apiDomainTryLimit {
+		domain := ""
+		for _, d := range c.apiDomains() {
+			if !tried[d] {
+				domain = d
+				break
+			}
+		}
+		if domain == "" {
+			break // 当前池里能试的都试过了
+		}
+		tried[domain] = true
+		data, err := c.doAPIRequest(ctx, method, apiProt+domain+path, form, "")
 		if err == nil {
 			return data, nil
 		}
@@ -197,8 +220,36 @@ func (c *Client) reqAPI(ctx context.Context, method, path string, form url.Value
 			return nil, apiErr
 		}
 		lastErr = err
+		// 该域名还在线但已不提供 API(nginx 404 / 5xx / 风控页):
+		// 立刻尝试刷新域名池(受 apiDomainRetryAfter 最小间隔保护),
+		// 新域名会被下一轮循环捡起来,不必干等 TTL 到期。
+		if !refreshed && isDeadDomainError(err) {
+			refreshed = true
+			refreshAPIDomainsIfDeadDomain(ctx, c.http)
+		}
+	}
+	if lastErr == nil {
+		return nil, errNetwork("无可用上游域名")
 	}
 	return nil, classifyUpstreamError(lastErr, "")
+}
+
+// apiDomainTryLimit 单次请求最多尝试的域名数(池通常 4~5 个,多试只会拖长首屏)。
+const apiDomainTryLimit = 3
+
+// isDeadDomainError 判断错误是否更像"这个域名不再提供 API"而非"这次请求本身有问题"。
+// 上游换域后死域名返回 nginx 的 404 HTML,doAPIRequest 会包成 HTTP 404 的普通 error。
+func isDeadDomainError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "HTTP 404") ||
+		strings.Contains(text, "HTTP 502") ||
+		strings.Contains(text, "HTTP 503") ||
+		strings.Contains(text, "HTTP 521") ||
+		strings.Contains(text, "HTTP 522") ||
+		strings.Contains(text, "响应非 JSON")
 }
 
 // apiEnvelope 上游响应外层结构。业务错误信息可能在 msg/errorMsg/message 任一字段

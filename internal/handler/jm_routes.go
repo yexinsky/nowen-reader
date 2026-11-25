@@ -95,12 +95,17 @@ func registerJMRoutes(api *gin.RouterGroup) {
 
 func registerJMAuthRoutes(g *gin.RouterGroup) {
 	// #1 GET /api/health — 健康检查/模式探测(零上游调用)
+	//
+	// apiDomains 暴露域名池状态:上游换域后死域名返回的是 nginx 404,过去这类故障
+	// 只在业务接口上表现为笼统的「JM 服务端返回错误」,排查要靠重启猜。
+	// 这里按零上游调用的口径给出当前池、来源(dynamic/env/static)与最近一次刷新结果。
 	g.GET("/health", func(c *gin.Context) {
 		jmOK(c, gin.H{
-			"status":   "ok",
-			"mock":     false,
-			"version":  jmServiceVersion,
-			"upstream": "jmcomic-2.6.17",
+			"status":     "ok",
+			"mock":       false,
+			"version":    jmServiceVersion,
+			"upstream":   "jmcomic-2.6.17",
+			"apiDomains": jm.APIDomainsStatus(),
 		})
 	})
 

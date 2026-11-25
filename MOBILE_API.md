@@ -206,12 +206,16 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 
 - **鉴权**：无。
 - **请求**：无参数。
-- **响应 `data`**：`{ "status": "ok", "mock": bool, "version": "1.0.0", "upstream": "jmcomic-2.6.17" }`
+- **响应 `data`**：`{ "status": "ok", "mock": bool, "version": "1.0.0", "upstream": "jmcomic-2.6.17", "apiDomains": {...} }`
   - `version`：服务版本，恒 `"1.0.0"`（`config.VERSION`）。
   - `upstream`：mock 恒 `"jmcomic-2.6.17"`；live 读 `jmcomic.__version__`（失败回退 `"jmcomic-2.6.17"`）。
+  - `apiDomains`（Go 实现扩展，Python 版无此字段）：上游 API 域名池状态，用于诊断"上游换域"类故障。
+    `{ "active": [...], "source": "dynamic|env|static", "refreshedAt": RFC3339, "stale": bool, "error": "..." }`。
+    上游换域后死域名返回的是 **nginx 404**（不是网络错误），只在业务接口上表现为笼统的
+    「JM 服务端返回错误」；此字段让故障自证：`stale=true` 或 `error` 非空即说明动态更新失败。
 - **错误**：`4000`（兜底，实际难触发）。
 - **mock/live 差异**：仅 `upstream` 取值来源不同；`mock` 字段恒反映当前模式。
-- **上游映射**：无网络调用。
+- **上游映射**：无网络调用（`apiDomains` 也只在内存里读进程级状态）。
 - **⚠️ 备注**：前端用此端点做连通性探测（settings.js 保存代理后回调验证）。
 
 ### 3.2 auth

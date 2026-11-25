@@ -91,6 +91,8 @@ func (c *Client) Setting(ctx context.Context) ([]byte, error) {
 // CaptchaBytes 代理上游验证码图片(live.py captcha_bytes):
 // 优先 API 域名池第 1 个,失败回退网页端域名;返回 (bytes, contentType)。
 func (c *Client) CaptchaBytes(ctx context.Context) ([]byte, string, error) {
+	c.ensureInit(ctx)
+	refreshAPIDomains(ctx, c.http)
 	candidates := []string{}
 	if domains := c.apiDomains(); len(domains) > 0 {
 		candidates = append(candidates, domains[0])
@@ -180,6 +182,8 @@ func (c *Client) Login(ctx context.Context, username, password, captcha string) 
 	}
 	// 单请求封装:构建 → 解密;业务 code!=200 走 loginBusinessError
 	c.ensureInit(ctx)
+	// 与 reqAPI 同款:登录前也过一道 TTL 门控的域名刷新,避免用已下线的域名登录
+	refreshAPIDomains(ctx, c.http)
 	endpoint := apiProt + c.apiDomains()[0] + "/login"
 	ts := c.ts.Load()
 	token, tokenparam := tokenAndTokenparam(ts, c.currentAppVersion(), appTokenSecret)
