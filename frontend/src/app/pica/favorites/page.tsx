@@ -3,14 +3,23 @@
 /**
  * 哔咔在线源 · 收藏页
  * GET /api/pica/favourites?s=dd|da&page=;排序切换 + 分页。
+ *
+ * 书架级下载入口(对齐 JM 收藏页与两个阅读历史页):
+ * - 每张卡片左上「下载整本」:列表内直接归档,不必进详情页
+ * - 顶部「多选下载」:整页勾选后底部悬浮条批量下载
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { Bookmark, Loader2 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
 import { PicaErrorCard, PicaGate } from "@/components/pica/PicaGate";
+import { PicaComicCard } from "@/components/pica/ComicCard";
 import { PicaComicGrid } from "@/components/pica/ComicGrid";
-import { PicaBatchSelectionProvider } from "@/components/pica/download/BatchDownload";
+import {
+  PicaBatchSelectionProvider,
+  usePicaBatchSelection,
+} from "@/components/pica/download/BatchDownload";
+import { PicaQuickDownloadButton } from "@/components/pica/download/QuickDownloadButton";
 import { picaFavorites } from "@/lib/pica/client";
 import type { PicaComicItem } from "@/lib/pica/types";
 
@@ -101,7 +110,15 @@ function FavoritesContent() {
       ) : (
         <>
           <PicaBatchSelectionProvider comics={items}>
-            <PicaComicGrid comics={items} emptyText="还没有收藏任何漫画" />
+            {items.length === 0 ? (
+              <PicaComicGrid comics={items} emptyText="还没有收藏任何漫画" />
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {items.map((comic, index) => (
+                  <FavoriteCard key={`${comic.id}-${index}`} comic={comic} />
+                ))}
+              </div>
+            )}
           </PicaBatchSelectionProvider>
           {(hasNext || page > 1) && (
             <div className="mt-6 flex items-center justify-center gap-3">
@@ -125,6 +142,31 @@ function FavoritesContent() {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 收藏卡片:封面左上叠「下载整本」
+ * 多选模式下收起 —— 此时封面点击 = 勾选,由卡片自己的勾选角标接管。
+ */
+function FavoriteCard({ comic }: { comic: PicaComicItem }) {
+  const batch = usePicaBatchSelection();
+  const selecting = batch?.selectMode ?? false;
+
+  return (
+    <div className="group/item relative">
+      <PicaComicCard comic={comic} />
+      {!selecting && (
+        <div className="absolute left-1.5 top-1.5 z-10">
+          <PicaQuickDownloadButton
+            bookId={comic.id}
+            title={comic.title}
+            author={comic.author}
+            compact
+          />
+        </div>
       )}
     </div>
   );

@@ -28,10 +28,13 @@ export function JmQuickDownloadButton({
   aid,
   title,
   author,
+  compact = false,
 }: {
   aid: string;
   title?: string;
   author?: string;
+  /** 叠在封面角上时用紧凑尺寸(与卡片「取消收藏」按钮同宽高) */
+  compact?: boolean;
 }) {
   const { tasks } = useJmDownloadCenter();
   const [open, setOpen] = useState(false);
@@ -43,19 +46,22 @@ export function JmQuickDownloadButton({
   const done = !active && latest?.status === "done";
   const failed = !active && latest?.status === "failed";
 
-  let icon = <Download className="h-4 w-4" />;
+  const boxClass = compact ? "h-7 w-7" : "h-8 w-8";
+  const iconClass = compact ? "h-3.5 w-3.5" : "h-4 w-4";
+
+  let icon = <Download className={iconClass} />;
   let tone = "border-border bg-background text-muted hover:border-accent/50 hover:text-foreground";
   let label = "下载整本";
   if (active) {
-    icon = <Loader2 className="h-4 w-4 animate-spin" />;
+    icon = <Loader2 className={`${iconClass} animate-spin`} />;
     tone = "border-accent/40 bg-accent/10 text-accent";
     label = active.status === "packing" ? "打包中" : active.status === "queued" ? "排队中" : "下载中";
   } else if (failed) {
-    icon = <AlertTriangle className="h-4 w-4" />;
+    icon = <AlertTriangle className={iconClass} />;
     tone = "border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500/15";
     label = latest?.error ? `下载失败:${latest.error}` : "下载失败,点击重试";
   } else if (done) {
-    icon = <CheckCircle2 className="h-4 w-4" />;
+    icon = <CheckCircle2 className={iconClass} />;
     tone = "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15";
     label = latest?.zipPath ? `已归档:${latest.zipPath}` : "已归档";
   }
@@ -73,7 +79,7 @@ export function JmQuickDownloadButton({
           if (active || done) setTasksOpen(true);
           else setOpen(true);
         }}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${tone}`}
+        className={`flex ${boxClass} shrink-0 items-center justify-center rounded-lg border shadow-sm backdrop-blur-sm transition-colors ${tone}`}
       >
         {icon}
       </button>

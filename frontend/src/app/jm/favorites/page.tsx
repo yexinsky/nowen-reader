@@ -6,6 +6,9 @@
  *
  * - 收藏夹 chips(#20):id + name + count,点击切换(默认 "0");切换重置回第一页
  * - 列表分页(#21,20/页):hasNext 时「加载更多」
+ * - 书架级下载入口(与阅读历史页同一套):
+ *   · 每张卡片左上「下载整本」,列表内直接归档,不必进详情页
+ *   · 顶部「多选下载」,整页勾选后底部悬浮条批量下载
  * - 取消收藏(#23 切换语义):网格项右上角按钮,stopPropagation + preventDefault 后调用;
  *   响应 favorited===false → 本地移除;null/其他 → 重拉当前页校准
  * - 误删防护:移除后顶部出现「已取消收藏 · 撤销」条(8 秒),撤销走 #22 重新收藏并插回原位置;
@@ -20,7 +23,8 @@ import { PageContent, PageHeader } from "@/components/PageHeader";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmComicCard } from "@/components/jm/ComicCard";
 import { JmComicGrid } from "@/components/jm/ComicGrid";
-import { JmBatchSelectionProvider } from "@/components/jm/download/BatchDownload";
+import { JmBatchSelectionProvider, useJmBatchSelection } from "@/components/jm/download/BatchDownload";
+import { JmQuickDownloadButton } from "@/components/jm/download/QuickDownloadButton";
 import { useToast } from "@/components/Toast";
 import {
   isJmApiError,
@@ -303,27 +307,12 @@ function FavoritesContent() {
           <JmBatchSelectionProvider comics={items}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {items.map((comic, index) => (
-              <div key={`${comic.aid}-${index}`} className="group/item relative">
-                <JmComicCard comic={comic} />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleRemove(comic.aid);
-                  }}
-                  disabled={removing.has(comic.aid)}
-                  title="取消收藏"
-                  aria-label={`取消收藏 ${comic.title || comic.aid}`}
-                  className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 opacity-0 backdrop-blur-sm transition-opacity hover:bg-red-500/80 focus-visible:opacity-100 disabled:cursor-not-allowed group-hover/item:opacity-100 [@media(hover:none)]:opacity-100"
-                >
-                  {removing.has(comic.aid) ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <BookmarkX className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
+              <FavoriteCard
+                key={`${comic.aid}-${index}`}
+                comic={comic}
+                removing={removing.has(comic.aid)}
+                onRemove={handleRemove}
+              />
             ))}
           </div>
           </JmBatchSelectionProvider>
@@ -375,6 +364,61 @@ function GridSkeleton({ count = 12 }: { count?: number }) {
           <div className="mt-1.5 h-3 w-1/2 rounded bg-card/60" />
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * 收藏卡片:封面上叠两个操作入口
+ * - 左上「下载整本」:列表内直接归档,不必进详情页(与阅读历史页同一个组件、同一套状态)
+ * - 右上「取消收藏」:手机端常显(靠撤销条兜底,不做确认弹窗)
+ * 多选模式下两个入口都收起 —— 此时封面点击 = 勾选,左上角由卡片自己的勾选角标接管。
+ */
+function FavoriteCard({
+  comic,
+  removing,
+  onRemove,
+}: {
+  comic: JmComicItem;
+  removing: boolean;
+  onRemove: (aid: string) => void;
+}) {
+  const batch = useJmBatchSelection();
+  const selecting = batch?.selectMode ?? false;
+
+  return (
+    <div className="group/item relative">
+      <JmComicCard comic={comic} />
+      {!selecting && (
+        <>
+          <div className="absolute left-1.5 top-1.5 z-10">
+            <JmQuickDownloadButton
+              aid={comic.aid}
+              title={comic.title}
+              author={comic.author}
+              compact
+            />
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onRemove(comic.aid);
+            }}
+            disabled={removing}
+            title="取消收藏"
+            aria-label={`取消收藏 ${comic.title || comic.aid}`}
+            className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition-colors hover:bg-red-500/80 disabled:cursor-not-allowed"
+          >
+            {removing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <BookmarkX className="h-4 w-4" />
+            )}
+          </button>
+        </>
+      )}
     </div>
   );
 }
