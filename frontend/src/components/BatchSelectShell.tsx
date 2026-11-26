@@ -36,16 +36,14 @@ export function BatchSelectShell({
   children,
   onDownload,
   hint = "多选下载",
-  unit = "部",
 }: {
   /** 本页可用于批量下载的全部条目 */
   items: BatchSelectItem[];
   /** 行渲染;在 selectMode 下调用方应让整行点击 = toggle 而不是跳转 */
   children: (state: BatchSelectState) => ReactNode;
-  /** 点「批量下载(N)」:拿到被选中的条目,由调用方打开自己的下载对话框 */
+  /** 点「下载(N)」:拿到被选中的条目,由调用方打开自己的下载对话框 */
   onDownload: (picked: BatchSelectItem[]) => void;
   hint?: string;
-  unit?: string;
 }) {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -103,36 +101,37 @@ export function BatchSelectShell({
         <>
           <BatchActionBarSpacer />
           <BatchActionBar>
-            <span className="mr-auto text-xs text-muted">
-              已选 <span className="font-medium text-accent">{selected.size}</span> / {items.length} {unit}
+            {/* 单行不换行:手机 390px 下四个按钮换行会把操作条顶成两行,压住列表 */}
+            <span className="shrink-0 text-xs text-muted">
+              已选 <span className="font-medium text-accent">{selected.size}</span>/{items.length}
             </span>
             <button
               type="button"
               onClick={() =>
                 setSelected(allSelected ? new Set() : new Set(items.map((it) => it.id)))
               }
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+              className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1.5 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
             >
               {allSelected ? <Square className="h-3.5 w-3.5" /> : <CheckSquare className="h-3.5 w-3.5" />}
-              {allSelected ? "全不选" : "全选本页"}
+              <span className="hidden sm:inline">{allSelected ? "全不选" : "全选本页"}</span>
+              <span className="sm:hidden">{allSelected ? "全不选" : "全选"}</span>
             </button>
             <button
               type="button"
               disabled={selected.size === 0}
               onClick={() => onDownload(items.filter((it) => selected.has(it.id)))}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
-              批量下载({selected.size})
+              下载({selected.size})
             </button>
             <button
               type="button"
               onClick={exit}
               aria-label="退出多选"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-foreground"
+              className="inline-flex shrink-0 items-center justify-center rounded-lg border border-border px-2 py-1.5 text-xs text-muted transition-colors hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" />
-              退出
             </button>
           </BatchActionBar>
         </>

@@ -17,7 +17,7 @@ import type { ReactNode } from "react";
 export function BatchActionBar({ children }: { children: ReactNode }) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(3.5rem+env(safe-area-inset-bottom,0px)+0.5rem)] sm:px-6 sm:pb-6 lg:pl-[calc(220px+1.5rem)] xl:pl-[calc(240px+1.5rem)]">
-      <div className="pointer-events-auto mx-auto flex max-w-2xl flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/95 px-3 py-2 shadow-2xl backdrop-blur-xl">
+      <div className="pointer-events-auto mx-auto flex max-w-2xl flex-nowrap items-center gap-1.5 rounded-xl border border-border/60 bg-card/95 px-2.5 py-2 shadow-2xl backdrop-blur-xl sm:gap-2 sm:px-3">
         {children}
       </div>
     </div>
