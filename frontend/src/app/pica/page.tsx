@@ -345,36 +345,40 @@ function CollectionsTab() {
   if (sections.length === 0) {
     return <p className="py-16 text-center text-sm text-muted">暂无推荐内容</p>;
   }
+  // 神魔推荐的漫画跨多个 section:整块挂多选容器,「全选本页」按全部区块统计
+  const recommendComics: PicaComicItem[] = sections.flatMap((s) => s.list ?? []);
   return (
-    <div className="space-y-8">
-      {sections.map((section) => (
-        <section key={section.title}>
-          <div className="mb-3 flex items-center gap-2">
-            {section.thumbUrl && (
-              <img
-                src={resolvePicaUrl(section.thumbUrl)}
-                alt=""
-                loading="lazy"
-                className="h-8 w-8 rounded-lg object-cover"
-              />
-            )}
-            <h2 className="text-base font-semibold text-foreground">{section.title}</h2>
-            {section.description && (
-              <span className="truncate text-xs text-muted">{section.description}</span>
-            )}
-          </div>
-          {(section.list?.length ?? 0) === 0 ? (
-            <p className="py-6 text-center text-sm text-muted">该合集暂无漫画</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {section.list.map((comic) => (
-                <PicaComicCard key={comic.id} comic={comic} />
-              ))}
+    <PicaBatchSelectionProvider comics={recommendComics}>
+      <div className="space-y-8">
+        {sections.map((section) => (
+          <section key={section.title}>
+            <div className="mb-3 flex items-center gap-2">
+              {section.thumbUrl && (
+                <img
+                  src={resolvePicaUrl(section.thumbUrl)}
+                  alt=""
+                  loading="lazy"
+                  className="h-8 w-8 rounded-lg object-cover"
+                />
+              )}
+              <h2 className="text-base font-semibold text-foreground">{section.title}</h2>
+              {section.description && (
+                <span className="truncate text-xs text-muted">{section.description}</span>
+              )}
             </div>
-          )}
-        </section>
-      ))}
-    </div>
+            {(section.list?.length ?? 0) === 0 ? (
+              <p className="py-6 text-center text-sm text-muted">该合集暂无漫画</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {section.list.map((comic) => (
+                  <PicaComicCard key={comic.id} comic={comic} />
+                ))}
+              </div>
+            )}
+          </section>
+        ))}
+      </div>
+    </PicaBatchSelectionProvider>
   );
 }
 

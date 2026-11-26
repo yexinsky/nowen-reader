@@ -13,10 +13,13 @@
  * - 空态 / 错误(JmErrorCard)/ 骨架屏齐全;不做轮询
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
 import { PageContent, PageHeader } from "@/components/PageHeader";
+import { BatchSelectMark, BatchSelectShell, type BatchSelectItem } from "@/components/BatchSelectShell";
+import { JmDownloadDialog, type JmDownloadBatchItem } from "@/components/jm/download/DownloadDialog";
+import { JmQuickDownloadButton } from "@/components/jm/download/QuickDownloadButton";
 import { JmErrorCard, JmGate } from "@/components/jm/JmGate";
 import { JmCover } from "@/components/jm/LetterCover";
 import { useToast } from "@/components/Toast";
@@ -129,6 +132,27 @@ function HistoryContent() {
 
   const hasItems = items.length > 0;
 
+  /** 批量下载的候选项:历史里同一部漫画可能有多条(不同章节),按 aid 去重 */
+  const batchCandidates = useMemo<BatchSelectItem[]>(() => {
+    const seen = new Set<string>();
+    const out: BatchSelectItem[] = [];
+    for (const it of items) {
+      if (!it.aid || seen.has(it.aid)) continue;
+      seen.add(it.aid);
+      out.push({ id: it.aid, title: it.title });
+    }
+    return out;
+  }, [items]);
+
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchPicked, setBatchPicked] = useState<JmDownloadBatchItem[]>([]);
+
+  const openBatchDownload = useCallback((picked: BatchSelectItem[]) => {
+    if (picked.length === 0) return;
+    setBatchPicked(picked.map((p) => ({ aid: p.id, title: p.title, author: p.author })));
+    setBatchOpen(true);
+  }, []);
+
   return (
     <div>
       {/* 顶部操作条 */}
@@ -164,16 +188,24 @@ function HistoryContent() {
         </div>
       ) : (
         <>
-          <div className="space-y-2">
-            {items.map((item, index) => (
-              <HistoryRow
-                key={`${item.aid}-${item.pid}-${index}`}
-                item={item}
-                privacyEnabled={privacyEnabled}
-                blurNSFW={blurNSFW}
-              />
-            ))}
-          </div>
+          {/* 多选壳:历史行本身不是卡片网格,用 render-prop 让每行自己处理选中态 */}
+          <BatchSelectShell items={batchCandidates} onDownload={openBatchDownload}>
+            {(sel) => (
+              <div className="space-y-2">
+                {items.map((item, index) => (
+                  <HistoryRow
+                    key={`${item.aid}-${item.pid}-${index}`}
+                    item={item}
+                    privacyEnabled={privacyEnabled}
+                    blurNSFW={blurNSFW}
+                    selecting={sel.selectMode}
+                    selected={sel.isSelected(item.aid)}
+                    onToggle={() => sel.toggle(item.aid)}
+                  />
+                ))}
+              </div>
+            )}
+          </BatchSelectShell>
 
           {/* 分页尾部 */}
           {loadingMore ? (
@@ -247,19 +279,31 @@ function HistoryContent() {
           </div>
         </div>
       )}
+      {/* 批量下载对话框(由 BatchSelectShell 的多选条触发) */}
+      <JmDownloadDialog
+        open={batchOpen}
+        onClose={() => setBatchOpen(false)}
+        batch={batchPicked}
+      />
     </div>
   );
 }
 
-/** 历史行:整项为 Link,直达阅读器并定位页码 */
+/** 历史行:整项为 Link,直达阅读器并定位页码;多选模式下整行点击 = 切换选中 */
 function HistoryRow({
   item,
   privacyEnabled,
   blurNSFW,
+  selecting = false,
+  selected = false,
+  onToggle,
 }: {
   item: JmHistoryItem;
   privacyEnabled: boolean;
   blurNSFW: boolean;
+  selecting?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
 }) {
   // 历史项无标签数据,按标题兜底判定 NSFW;命中且模糊开启时恒定遮蔽
   const shouldBlur = isNSFW({ title: item.title }) && privacyEnabled && blurNSFW;
@@ -267,30 +311,50 @@ function HistoryRow({
   const timeText = formatDateTime(item.updatedAt);
 
   return (
-    <Link
-      to={`/jm/reader/${item.pid}?page=${item.imageIndex}&aid=${item.aid}`}
-      className="group flex items-center gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:border-accent/40 hover:bg-card-hover"
+    <div
+      className={`group flex items-center gap-3 rounded-xl border bg-card p-3 transition-colors hover:bg-card-hover ${
+        selected ? "border-accent/60 ring-1 ring-accent/20" : "border-border hover:border-accent/40"
+      }`}
     >
-      {/* 封面缩略图(无封面/加载失败 → 标题首字字母封面,避免整屏「裂图」观感) */}
-      <div className="aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-md bg-muted/10 sm:w-[72px]">
-        <JmCover src={coverUrl} title={item.title} blurred={shouldBlur} />
-      </div>
+      {selecting && <BatchSelectMark checked={selected} />}
 
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground/90 transition-colors group-hover:text-accent" title={item.title}>
-          {item.title || "无标题"}
-        </p>
-        <p className="mt-1 truncate text-xs text-muted" title={item.epTitle ?? undefined}>
-          {item.epTitle || "默认章节"}
-        </p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted/80">
-          <span>看到第 {item.imageIndex} 页</span>
-          {timeText && <span>{timeText}</span>}
+      {/* 主体是 Link(可访问性:键盘/语义都正确);下载按钮放在 Link 之外,
+          避免 <button> 嵌在 <a> 里这种非法结构 */}
+      <Link
+        to={`/jm/reader/${item.pid}?page=${item.imageIndex}&aid=${item.aid}`}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        onClick={(e) => {
+          // 多选模式下整行点击 = 勾选,不进阅读器
+          if (selecting) {
+            e.preventDefault();
+            onToggle?.();
+          }
+        }}
+      >
+        {/* 封面缩略图(无封面/加载失败 → 标题首字字母封面,避免整屏「裂图」观感) */}
+        <div className="aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-md bg-muted/10 sm:w-[72px]">
+          <JmCover src={coverUrl} title={item.title} blurred={shouldBlur} />
         </div>
-      </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground/90 transition-colors group-hover:text-accent" title={item.title}>
+            {item.title || "无标题"}
+          </p>
+          <p className="mt-1 truncate text-xs text-muted" title={item.epTitle ?? undefined}>
+            {item.epTitle || "默认章节"}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted/80">
+            <span>看到第 {item.imageIndex} 页</span>
+            {timeText && <span>{timeText}</span>}
+          </div>
+        </div>
+      </Link>
+
+      {/* 行内直接下载:不必再点进详情页;多选模式下隐藏,避免与勾选抢位置 */}
+      {!selecting && <JmQuickDownloadButton aid={item.aid} title={item.title} />}
 
       <ChevronRight className="h-4 w-4 shrink-0 text-muted/50 transition-transform group-hover:translate-x-0.5" />
-    </Link>
+    </div>
   );
 }
 

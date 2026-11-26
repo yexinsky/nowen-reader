@@ -379,50 +379,55 @@ function RecommendTab({ onOpenSerialization }: { onOpenSerialization: () => void
   const staticSections = sections.filter(
     (s) => s.kind === "static" && Array.isArray(s.list) && s.list.length > 0
   );
+  // 推荐区所有漫画:批量下载按这个池子算「全选本页」,跨区块一并勾选
+  const recommendComics: JmComicItem[] = staticSections.flatMap((s) => s.list ?? []);
 
   return (
     <div className="space-y-6">
-      {/* serialization 区块 → 「查看连载表」入口卡片(切到连载表标签) */}
-      {serialSections.map((s) => (
-        <button
-          key={s.key}
-          type="button"
-          onClick={onOpenSerialization}
-          className="group flex w-full items-center justify-between rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-accent/40 hover:bg-card-hover"
-        >
-          <span className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-              <LibraryBig className="h-5 w-5" />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold text-foreground">
-                {s.title || "连载更新"}
+      {/* 整块挂多选容器:推荐区的封面都能直接勾选批量下载,不必先点进详情页 */}
+      <JmBatchSelectionProvider comics={recommendComics}>
+        {/* serialization 区块 → 「查看连载表」入口卡片(切到连载表标签) */}
+        {serialSections.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={onOpenSerialization}
+            className="group flex w-full items-center justify-between rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-accent/40 hover:bg-card-hover"
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                <LibraryBig className="h-5 w-5" />
               </span>
-              <span className="mt-0.5 block text-xs text-muted">
-                按星期浏览本周连载,支持漫画 / 韩漫筛选
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-foreground">
+                  {s.title || "连载更新"}
+                </span>
+                <span className="mt-0.5 block text-xs text-muted">
+                  按星期浏览本周连载,支持漫画 / 韩漫筛选
+                </span>
               </span>
             </span>
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-muted transition-transform group-hover:translate-x-0.5" />
-        </button>
-      ))}
+            <ChevronRight className="h-5 w-5 shrink-0 text-muted transition-transform group-hover:translate-x-0.5" />
+          </button>
+        ))}
 
-      {/* static 区块 → 标题 + 横向滚动卡片流 */}
-      {staticSections.map((s) => (
-        <section key={s.key}>
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Sparkles className="h-4 w-4 text-accent" />
-            {s.title}
-          </h2>
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {(s.list ?? []).map((comic, index) => (
-              <div key={`${comic.aid}-${index}`} className="w-32 shrink-0 sm:w-36">
-                <JmComicCard comic={comic} />
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+        {/* static 区块 → 标题 + 横向滚动卡片流 */}
+        {staticSections.map((s) => (
+          <section key={s.key}>
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Sparkles className="h-4 w-4 text-accent" />
+              {s.title}
+            </h2>
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {(s.list ?? []).map((comic, index) => (
+                <div key={`${comic.aid}-${index}`} className="w-32 shrink-0 sm:w-36">
+                  <JmComicCard comic={comic} />
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </JmBatchSelectionProvider>
     </div>
   );
 }
