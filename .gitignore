@@ -82,3 +82,7 @@ coverage.out
 *.log
 git-tmp*.txt
 run-log.txt
+
+# DSH AgentTeams 运行态（团队 roster / 邮箱归档 / 已退役成员表，属于本机协作状态，
+# 每次组队都会重写，不入库）
+.agent-teams/
