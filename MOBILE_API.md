@@ -587,6 +587,7 @@ live 异常分类顺序（`live._map_live_error`）：`ApiError` 直通 → `Mis
 - **mock/live 差异**：mock 当日首次 → `msg="签到成功"`（写入 `STATE.sign_days`），当日重复 → 幂等成功 `msg="今日已签到"`；live 见下。
 - **上游映射（live）**：**先查后签**（保证幂等）：① `GET /daily?user_id={uid}` 取状态；② `todaySigned=true` → 直接返回 `{ok:true, msg:"今日已签到"}`（不调上游签到）；③ 否则取 `dailyId`，`<=0` → `2001`；④ `POST /daily_chk`（表单 `user_id`+`daily_id`，对齐桌面端 SignDailyReq2）→ `msg` 为上游返回信息（解密失败时为空串）。
 - **⚠️ 备注**：签到幂等由"先查状态再决定是否调上游"实现，重复调用不会向上游重复提交。
+- **⚠️ 降级响应**：上游会话（AVS）失效时 `/daily_chk` 不回 `errorMsg`，只给 `{"code":200,"data":[]}`（空数组，不是加密字符串）。注意 `/daily` 是按 `user_id` 参数返回日历、**与登录态无关**，所以「签到日历能显示」不代表「还能签到」。本服务把该降级响应翻译成 `1002`（登录已失效，请重新登录），前端据此清会话并跳登录页；不要把空数组当成功，也不要把 Go 内部报错原样抛给用户。
 
 ---
 

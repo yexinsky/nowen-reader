@@ -4,7 +4,9 @@ package jm
 // ComicItem 封面归一。口径对照 mobile/server/core/live.py 与 MOBILE_API.md。
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -364,5 +366,86 @@ func TestPrettifySignMsg(t *testing.T) {
 		if got := prettifySignMsg(c.in); got != c.want {
 			t.Fatalf("prettifySignMsg(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// ── #30 签到:上游降级响应 {"code":200,"data":[]} 必须翻译成 1002 ──
+//
+// 上游会话(AVS)失效时 /daily_chk 不回 errorMsg,只给空数组;
+// 而 /daily 仍按 user_id 参数返回日历(与登录态无关),所以「日历能显示」
+// 不代表「还能签到」。旧实现把空数组当普通上游错误,用户只看到
+// 「JM 服务端返回错误 + data 字段非字符串」,无从下手。
+func TestSignDoDegradedResponseMeansUnauthorized(t *testing.T) {
+	resetDomainState(t)
+
+	up := &fakeUpstream{byHost: map[string]func() (int, string){
+		"sign.example": func() (int, string) { return http.StatusOK, `{"code":200,"data":[]}` },
+	}}
+	domainMu.Lock()
+	domainUpdated = []string{"sign.example"}
+	domainTriedAt = time.Now()
+	domainRetryAt = time.Now().Add(apiDomainRefreshTTL)
+	domainMu.Unlock()
+
+	cl := &Client{
+		http:       &http.Client{Transport: up},
+		cookies:    map[string]string{},
+		appVersion: defaultAppVersion,
+	}
+	cl.ts.Store(1700000000)
+	cl.initOnce.Do(func() {})
+
+	_, err := SignDo(context.Background(), cl, "4295154", 74)
+	if err == nil {
+		t.Fatal("空数组降级响应不应被当成功")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("应返回 *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != CodeUnauthorized {
+		t.Fatalf("降级响应应翻译成 1002(登录已失效), got %d: %s", apiErr.Code, apiErr.Msg)
+	}
+	if apiErr.Msg != "登录已失效,请重新登录" {
+		t.Fatalf("提示应引导重新登录, got %q", apiErr.Msg)
+	}
+}
+
+// 正常签到响应(msg 内嵌在加密载荷)仍按原样成功,不能被上面的翻译误伤。
+func TestSignDoSuccessKeepsMessage(t *testing.T) {
+	resetDomainState(t)
+
+	payload, err := encodeRespData([]byte(`{"status":"ok","msg":"Jcoin:70 EXP:70"}`), "1700000000", "")
+	if err != nil {
+		t.Fatalf("构造响应失败: %v", err)
+	}
+	up := &fakeUpstream{byHost: map[string]func() (int, string){
+		"sign.example": func() (int, string) {
+			return http.StatusOK, `{"code":200,"data":"` + payload + `"}`
+		},
+	}}
+	domainMu.Lock()
+	domainUpdated = []string{"sign.example"}
+	domainTriedAt = time.Now()
+	domainRetryAt = time.Now().Add(apiDomainRefreshTTL)
+	domainMu.Unlock()
+
+	cl := &Client{
+		http:       &http.Client{Transport: up},
+		cookies:    map[string]string{},
+		appVersion: defaultAppVersion,
+	}
+	cl.ts.Store(1700000000)
+	cl.initOnce.Do(func() {})
+
+	data, err := SignDo(context.Background(), cl, "4295154", 74)
+	if err != nil {
+		t.Fatalf("正常响应不应报错: %v", err)
+	}
+	if ok, _ := data["ok"].(bool); !ok {
+		t.Fatalf("ok 应为 true: %#v", data)
+	}
+	if msg, _ := data["msg"].(string); msg != "签到成功!获得 70 金币、70 经验" {
+		t.Fatalf("msg 应美化, got %q", msg)
 	}
 }

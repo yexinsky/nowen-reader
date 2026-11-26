@@ -10,6 +10,7 @@ package jm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -419,12 +420,20 @@ func prettifySignMsg(msg string) string {
 // SignDo #30 执行签到:POST /daily_chk(表单 user_id+daily_id,对齐桌面端
 // SignDailyReq2);msg 为上游返回信息(缺失/解密失败 → "")。
 // 注意幂等由调用方"先查后签"实现(见 handler #30)。
+//
+// 上游在会话(AVS)失效时不会给 errorMsg,只回 {"code":200,"data":[]} 这种
+// 空数组降级体(与登录无关的 /daily 仍会给正常数据,所以"能拉到日历"不代表
+// 还能签到)。这种响应翻译成 1002,前端据此清会话并引导重新登录,
+// 否则用户只会看到一句无从下手的「JM 服务端返回错误」。
 func SignDo(ctx context.Context, cl *Client, uid string, dailyID int) (map[string]any, error) {
 	form := url.Values{}
 	form.Set("user_id", uid)
 	form.Set("daily_id", strconv.Itoa(dailyID))
 	data, err := cl.reqAPI(ctx, "POST", "/daily_chk", form)
 	if err != nil {
+		if errors.Is(err, errDataNotEncrypted) {
+			return nil, errUnauthorized()
+		}
 		return nil, err
 	}
 	msg := ""

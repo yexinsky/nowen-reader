@@ -1,10 +1,21 @@
 package jm
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/nowen-reader/nowen-reader/internal/proxyguard"
 )
+
+// errDataNotEncrypted 上游响应信封的 data 不是「加密字符串」。
+//
+// 正常端点的 data 恒为 base64(AES) 字符串;个别端点(列表类)会给 JSON 数组,
+// 这类由 doAPIRequest 直接放行。真正落到这里的,是上游给出的**降级响应**:
+// 需要登录的端点在上游会话(AVS)失效时会回 {"code":200,"data":[]} ——
+// 既不是业务错误码,也不是加密载荷。此时若按普通上游错误上报,
+// 用户只会看到「JM 服务端返回错误」加一句 Go 内部报错,
+// 所以由调用方按语义翻译(账号类端点 → 1002 让用户重新登录)。
+var errDataNotEncrypted = errors.New("上游响应 data 非加密字符串")
 
 // JM 错误码(MOBILE_API.md §0.3,与 Python 版 core/errors.py 对齐)
 const (

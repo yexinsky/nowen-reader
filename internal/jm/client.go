@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -248,6 +249,12 @@ func (c *Client) reqAPI(ctx context.Context, method, path string, form url.Value
 	if lastErr == nil {
 		return nil, errNetwork("无可用上游域名")
 	}
+	// 降级响应(data 非加密载荷)保留原始错误:账号类端点要把它翻译成
+	// 「登录已失效」,其余端点由 ClassifyError 兜底成 2001。
+	// 一旦在这里包成 *APIError 就丢了 errors.Is 的能力。
+	if errors.Is(lastErr, errDataNotEncrypted) {
+		return nil, lastErr
+	}
 	return nil, classifyUpstreamError(lastErr, "")
 }
 
@@ -363,7 +370,10 @@ func (c *Client) doAPIRequest(ctx context.Context, method, endpoint string, form
 	}
 	var dataB64 string
 	if err := json.Unmarshal(envelope.Data, &dataB64); err != nil {
-		return nil, fmt.Errorf("data 字段非字符串: %w", err)
+		// 数组/数字等非加密载荷:需要登录态的端点在上游会话失效时会回
+		// {"code":200,"data":[]},连 errorMsg 都没有。带上 errDataNotEncrypted
+		// 让账号类端点把它翻译成「登录已失效」,而不是暴露 Go 内部报错。
+		return nil, fmt.Errorf("%w: %v", errDataNotEncrypted, err)
 	}
 	decoded, err := decodeRespData(dataB64, strconv.FormatInt(ts, 10), "")
 	if err != nil {
